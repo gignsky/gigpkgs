@@ -3,12 +3,16 @@
 
   inputs = {
     # nixpkgs stable (source of truth for most packages)
-    nixpkgs.follows = "nixpkgs-stable";
-    nixpkgs-stable.follows = "nixpkgs-2605";
-    nixpkgs-2605.url = "github:NixOS/nixpkgs/nixos-26.05";
-    # nixpkgs unstable (accessible as pkgs.unstable)
-    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nixpkgs-master.url = "github:NixOS/nixpkgs/master";
+    nixpkgs.follows = "nixos-unstable";
+
+    # nixos branches
+    nixos-stable.follows = "nixos-2605";
+    nixos-2605.url = "github:NixOS/nixpkgs/nixos-26.05";
+    nixos-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    # nixpkgs branches
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/master";
+    nixpkgs-master.follows = "nixpkgs-unstable";
 
     # Home Manager
     home-manager = {
