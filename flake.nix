@@ -82,15 +82,13 @@
         };
       };
 
-      checks.${system} =
-        import ./checks {
-          inherit
-            self
-            pkgs
-            lib
-            ;
-        }
-        // pre-commit-check;
+      checks.${system} = import ./checks {
+        inherit
+          self
+          pkgs
+          lib
+          ;
+      };
 
       devShells.${system}.default = pkgs.mkShell {
         NIX_CONFIG = "extra-experimental-features = nix-command flakes";
