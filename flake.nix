@@ -111,6 +111,8 @@
             upjust
             locker
             ripgrep
+
+            upignore
             ;
         };
         shellHook = ''
