@@ -20,17 +20,16 @@
       ...
     }@inputs:
     let
-      inherit (self) outputs;
+      # inherit (self) outputs;
       inherit (nixpkgs) lib;
       system = "x86_64-linux";
-      configLib = import ./lib { inherit lib; };
-      specialArgs = {
-        inherit
-          inputs
-          outputs
-          nixpkgs
-          ;
-      };
+      # specialArgs = {
+      #   inherit
+      #     inputs
+      #     outputs
+      #     nixpkgs
+      #     ;
+      # };
       customPkgs = import ./pkgs { inherit pkgs; };
       pkgs =
         import nixpkgs {
@@ -118,7 +117,7 @@
         shellHook = ''
           ${self.pre-commit-check.shellHook}
 
-          echo "Welcome to the gigpkgs devShell" | ${pkgs.lolcat}/bin/lolcat"
+          echo "Welcome to the gigpkgs devShell" | ${pkgs.lolcat}/bin/lolcat
         '';
       };
 

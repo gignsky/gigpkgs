@@ -1,4 +1,3 @@
-{ ... }:
 {
   cargo-update = import ./cargo-update.nix;
   locker = import ./locker.nix;
