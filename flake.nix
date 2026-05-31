@@ -3,7 +3,9 @@
 
   inputs = {
     # nixpkgs stable (source of truth for most packages)
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    nixpkgs.follows = "nixpkgs-stable";
+    nixpkgs-stable.follows = "nixpkgs-2605";
+    nixpkgs-2605.url = "github:NixOS/nixpkgs/nixos-26.05";
     # nixpkgs unstable (accessible as pkgs.unstable)
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/master";
 
