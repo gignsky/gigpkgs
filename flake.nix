@@ -8,6 +8,7 @@
     nixpkgs-2605.url = "github:NixOS/nixpkgs/nixos-26.05";
     # nixpkgs unstable (accessible as pkgs.unstable)
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs-master.url = "github:NixOS/nixpkgs/master";
 
     # Home Manager
     home-manager = {
