@@ -17,7 +17,7 @@
   inherit
     inputs
   outputs
-  nixpkgs
+  nixpkgs;
   };
       customPkgs = import ./pkgs {inherit pkgs;};
       pkgs = 
