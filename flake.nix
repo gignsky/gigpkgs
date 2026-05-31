@@ -5,6 +5,12 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/master";
     nixpkgs-pkgs-stable.url = "github:NixOS/nixpkgs/nixpkgs-26.05";
+
+    # utlis
+    pre-commit-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
