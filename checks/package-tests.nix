@@ -1,4 +1,8 @@
-{ lib, pkgs }:
+{
+  self,
+  lib,
+  pkgs,
+}:
 let
   packageBuilds = lib.mapAttrs' (name: pkg: {
     name = "build-${name}";
