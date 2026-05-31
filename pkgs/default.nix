@@ -8,8 +8,8 @@ let
   scripts = import ./scripts.nix { inherit pkgs; };
   programs = import ./programs { inherit pkgs; };
 in
-# rec {
-{
+rec {
+  # {
   #################### Packaged Scripts ####################
   # Import all packaged scripts from scripts.nix
   # inherit (scripts)
