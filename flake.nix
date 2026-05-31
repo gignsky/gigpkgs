@@ -30,6 +30,7 @@
   // customPkgs;
     in 
       packages.${system} = import ./pkgs {inherit pkgs;};
+    {
 
   overlays = import ./overlays {inherit inputs;};
 
@@ -106,4 +107,5 @@ pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
   };
 
   formatter.${system} = pkgs.nixpkgs-fmt;
+    };
 }
