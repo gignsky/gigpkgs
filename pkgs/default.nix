@@ -12,17 +12,17 @@ in
 {
   #################### Packaged Scripts ####################
   # Import all packaged scripts from scripts.nix
-  inherit (scripts)
-    check-hardware-config
-    nixos-rebuild
-    home-switch
-    flake-build
-    pre-commit-flake-check
-    run-iso-vm
-    package-script
-    roll-flow
-    rf
-    ;
+  # inherit (scripts)
+  #   check-hardware-config
+  #   nixos-rebuild
+  #   home-switch
+  #   flake-build
+  #   pre-commit-flake-check
+  #   run-iso-vm
+  #   package-script
+  #   roll-flow
+  #   rf
+  #   ;
 
   #################### Packaged Programs ####################
   # Import all packaged scripts from programs/
