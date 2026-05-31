@@ -38,16 +38,6 @@
 
       packages.${system} = import ./pkgs { inherit pkgs; };
 
-      checks.${system} =
-        import ./checks {
-          inherit
-            self
-            pkgs
-            lib
-            ;
-        }
-        // pre-commit-check;
-
       pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
         src = ./.;
         hooks = {
@@ -84,6 +74,16 @@
           };
         };
       };
+
+      checks.${system} =
+        import ./checks {
+          inherit
+            self
+            pkgs
+            lib
+            ;
+        }
+        // pre-commit-check;
 
       devShells.${system}.default = pkgs.mkShell {
         NIX_CONFIG = "extra-experimental-features = nix-command flakes";
