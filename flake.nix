@@ -23,6 +23,7 @@
       inherit (self) outputs;
       inherit (nixpkgs) lib;
       system = "x86_64-linux";
+      configLib = import ./lib { inherit lib; };
       specialArgs = {
         inherit
           inputs
