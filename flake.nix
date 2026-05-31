@@ -6,43 +6,50 @@
     # nixospkgs = "github:NixOS/nixpkgs/nixos-26.05";
   };
 
-  outputs = {
-    self,nixpkgs,...
-  }@inputs:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      ...
+    }@inputs:
     let
       inherit (self) outputs;
       inherit (nixpkgs) lib;
       system = "x86_64-linux";
       specialArgs = {
-  inherit
-    inputs
-  outputs
-  nixpkgs;
-  };
-      customPkgs = import ./pkgs {inherit pkgs;};
-      pkgs = 
+        inherit
+          inputs
+          outputs
+          nixpkgs
+          ;
+      };
+      customPkgs = import ./pkgs { inherit pkgs; };
+      pkgs =
         import nixpkgs {
-    inherit system;
-    config = {
-    allowUnfree=true;
-  };
-  }
-  // customPkgs;
-    in 
-      packages.${system} = import ./pkgs {inherit pkgs;};
+          inherit system;
+          config = {
+            allowUnfree = true;
+          };
+        }
+        // customPkgs;
+    in
     {
+      overlays = import ./overlays { inherit inputs; };
 
-  overlays = import ./overlays {inherit inputs;};
+      packages.${system} = import ./pkgs { inherit pkgs; };
 
-checks.${system} = import ./checks {
-    inherit
-  self
-  pkgs 
-  lib;
-  }// pre-commit-check;
+      checks.${system} =
+        import ./checks {
+          inherit
+            self
+            pkgs
+            lib
+            ;
+        }
+        // pre-commit-check;
 
-pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
-    src = ./.;
+      pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
+        src = ./.;
         hooks = {
           nixfmt = {
             enable = true;
@@ -75,37 +82,38 @@ pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
           end-of-file-fixer = {
             enable = true;
           };
-    };
-  };
+        };
+      };
 
-  devShells.${system}.default = pkgs.mkShell {
-    NIX_CONFIG = "extra-experimental-features = nix-command flakes";
+      devShells.${system}.default = pkgs.mkShell {
+        NIX_CONFIG = "extra-experimental-features = nix-command flakes";
 
-    nativeBuildInputs = builtins.attrValues {
-    inherit (pkgs)
-  git 
-  pre-commit 
-  lolcat 
-  nixfmt 
-  nil 
-  just 
-  lazygit 
-  statix 
-  deadnix 
-  nix 
-  fzf 
-  quick-results
-  upjust 
-  locker 
-  ripgrep;
-  };
-    shellHook = ''
-    ${self.pre-commit-check.shellHook}
+        nativeBuildInputs = builtins.attrValues {
+          inherit (pkgs)
+            git
+            pre-commit
+            lolcat
+            nixfmt
+            nil
+            just
+            lazygit
+            statix
+            deadnix
+            nix
+            fzf
+            quick-results
+            upjust
+            locker
+            ripgrep
+            ;
+        };
+        shellHook = ''
+          ${self.pre-commit-check.shellHook}
 
-    echo "Welcome to the gigpkgs devShell" | ${pkgs.lolcat}/bin/lolcat"
-  '';
-  };
+          echo "Welcome to the gigpkgs devShell" | ${pkgs.lolcat}/bin/lolcat"
+        '';
+      };
 
-  formatter.${system} = pkgs.nixpkgs-fmt;
+      formatter.${system} = pkgs.nixpkgs-fmt;
     };
 }
