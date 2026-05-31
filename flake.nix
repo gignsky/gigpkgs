@@ -104,4 +104,6 @@ pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
     echo "Welcome to the gigpkgs devShell" | ${pkgs.lolcat}/bin/lolcat"
   '';
   };
+
+  formatter.${system} = pkgs.nixpkgs-fmt;
 }
