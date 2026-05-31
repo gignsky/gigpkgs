@@ -58,7 +58,7 @@
         "type": "github"
       }
     },
-    "nixpkgs": {
+    "nixpkgs-2605": {
       "locked": {
         "lastModified": 1779971959,
         "narHash": "sha256-R5nauXyqyfRUFiZycFFZdkF7wl6eaUpPLst35+2nJQY=",
@@ -115,7 +115,13 @@
     "root": {
       "inputs": {
         "home-manager": "home-manager",
-        "nixpkgs": "nixpkgs",
+        "nixpkgs": [
+          "nixpkgs-stable"
+        ],
+        "nixpkgs-2605": "nixpkgs-2605",
+        "nixpkgs-stable": [
+          "nixpkgs-2605"
+        ],
         "nixpkgs-unstable": "nixpkgs-unstable",
         "pre-commit-hooks": "pre-commit-hooks"
       }
