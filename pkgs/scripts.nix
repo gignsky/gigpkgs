@@ -1,0 +1,208 @@
+# Script packaging utilities
+# Converts shell scripts to proper Nix packages with dependency injection
+
+{
+  pkgs ? import <nixpkgs> { },
+}:
+
+let
+  # Helper function to create a packaged script from a .sh file
+  makeScriptPackage =
+    {
+      name, # Package name (used for binary name)
+      scriptPath, # Path to the .sh file
+      dependencies ? [ ], # List of packages this script depends on
+      description ? "A packaged shell script",
+    }:
+    pkgs.writeShellScriptBin name ''
+      # Auto-generated wrapper for ${scriptPath}
+
+      # Make dependencies available in PATH
+      export PATH="${pkgs.lib.makeBinPath dependencies}:$PATH"
+
+      # Execute the original script with all arguments
+      exec ${pkgs.bash}/bin/bash "${scriptPath}" "$@"
+    ''
+    // {
+      meta = {
+        inherit description;
+        # license = pkgs.lib.licenses.mit;
+        maintainers = [ ];
+      };
+      passthru = {
+        inherit scriptPath dependencies;
+        # Basic test that the script can be executed
+        tests.basic = pkgs.runCommand "${name}-test" { buildInputs = [ pkgs.bash ]; } ''
+          # Test that the script is executable and has valid bash syntax
+          ${pkgs.bash}/bin/bash -n "${scriptPath}" || exit 1
+          echo "Script syntax check passed" > $out
+        '';
+      };
+    };
+
+  # Script definitions
+  scripts = {
+    # Hardware configuration validation script
+    check-hardware-config = makeScriptPackage {
+      name = "check-hardware-config";
+      scriptPath = ../scripts/check-hardware-config.sh;
+      dependencies = with pkgs; [
+        bash
+        git
+        nix
+        coreutils
+        gnugrep
+        gawk
+      ];
+      description = "Validates hardware configuration synchronization and GPU setup";
+    };
+
+    # System rebuild script
+    nixos-rebuild = makeScriptPackage {
+      name = "nixos-rebuild";
+      scriptPath = ../scripts/nixos-rebuild.sh;
+      dependencies = with pkgs; [
+        bash
+        nix
+        # nixos-rebuild is available from system, not needed here (would cause recursion)
+        hostname
+      ];
+      description = "Rebuilds NixOS system configuration from flake";
+    };
+
+    # Home Manager rebuild script
+    home-switch = makeScriptPackage {
+      name = "home-switch";
+      scriptPath = ../scripts/home-switch.sh;
+      dependencies = with pkgs; [
+        bash
+        nix
+        home-manager
+        hostname
+      ];
+      description = "Rebuilds Home Manager configuration from flake";
+    };
+
+    # # Bootstrap script
+    # bootstrap-nixos = makeScriptPackage {
+    #   name = "bootstrap-nixos";
+    #   scriptPath = ../scripts/bootstrap-nixos.sh;
+    #   dependencies = with pkgs; [
+    #     bash
+    #     git
+    #     nix
+    #     gnugrep
+    #     coreutils
+    #   ];
+    #   description = "Bootstraps a new NixOS installation with dotfiles";
+    # };
+
+    # Flake build script
+    flake-build = makeScriptPackage {
+      name = "flake-build";
+      scriptPath = ../scripts/flake-build.sh;
+      dependencies = with pkgs; [
+        bash
+        nix
+      ];
+      description = "Builds specific flake targets with proper error handling";
+    };
+
+    # Pre-commit script
+    pre-commit-flake-check = makeScriptPackage {
+      name = "pre-commit-flake-check";
+      scriptPath = ../scripts/pre-commit-flake-check.sh;
+      dependencies = with pkgs; [
+        bash
+        nix
+        pre-commit
+      ];
+      description = "Runs pre-commit checks on the flake";
+    };
+
+    # ISO VM runner
+    run-iso-vm = makeScriptPackage {
+      name = "run-iso-vm";
+      scriptPath = ../scripts/run-iso-vm.sh;
+      dependencies = with pkgs; [
+        bash
+        nix
+        qemu
+      ];
+      description = "Runs the ISO installer in a VM for testing";
+    };
+
+    # Interactive script packager with fzf selection and OpenCode integration
+    package-script = makeScriptPackage {
+      name = "package-script";
+      scriptPath = ../scripts/package-script.sh;
+      dependencies = with pkgs; [
+        bash
+        nix
+        git
+        fzf
+        gnugrep
+        gawk
+        gnused
+        coreutils
+        findutils
+        bat
+      ];
+      description = "Interactive script packager with fzf selection and OpenCode test generation";
+    };
+
+    # Roll Flow workflow manager for NixOS multi-host configurations
+    roll-flow =
+      pkgs.writeShellScriptBin "roll-flow" ''
+        # Auto-generated wrapper for roll-flow (Nushell script)
+
+        # Make dependencies available in PATH
+        export PATH="${
+          pkgs.lib.makeBinPath (
+            with pkgs;
+            [
+              nushell
+              git
+              nix
+            ]
+          )
+        }:$PATH"
+
+        # Execute the roll-flow Nushell script with all arguments
+        exec ${pkgs.nushell}/bin/nu "${../scripts/roll-flow}" "$@"
+      ''
+      // {
+        meta = {
+          description = "Git workflow manager for NixOS multi-host dotfiles (Roll Flow system)";
+        };
+        passthru = {
+          scriptPath = ../scripts/roll-flow;
+          dependencies = with pkgs; [
+            nushell
+            git
+            nix
+          ];
+          # Basic test that the script can be executed
+          tests.basic =
+            pkgs.runCommand "roll-flow-test"
+              {
+                buildInputs = with pkgs; [ nushell ];
+              }
+              ''
+                # Test that the script is executable and has valid nushell syntax
+                ${pkgs.nushell}/bin/nu -c "nu-check ${../scripts/roll-flow}" || exit 1
+                echo "Roll-flow Nushell syntax check passed" > $out
+              '';
+        };
+      };
+  };
+
+in
+scripts
+// {
+  # Short alias 'rf' wraps the full 'roll-flow' command
+  rf = pkgs.writeShellScriptBin "rf" ''
+    # Wrapper that calls roll-flow with all arguments
+    exec ${scripts.roll-flow}/bin/roll-flow "$@"
+  '';
+}
