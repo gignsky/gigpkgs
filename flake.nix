@@ -53,10 +53,13 @@
       # Re-export nixpkgs lib so consumers can use gigpkgs.lib.nixosSystem, etc.
       inherit (nixpkgs) lib;
 
-      # LegacyPackages — the full nixpkgs set with gigpkgs overlays applied.
-      # Use this as a drop-in replacement for nixpkgs.legacyPackages.${system}
-      # in consuming flakes (e.g. dotfiles).
-      legacyPackages.${system} = pkgs;
+      # LegacyPackages — nixos-stable extended with gigpkgs custom packages.
+      # Use inputs.gigpkgs.legacyPackages.${system} in consuming flakes as a
+      # drop-in for nixpkgs.legacyPackages.${system} that includes gigpkgs packages.
+      legacyPackages = lib.genAttrs [
+        "x86_64-linux"
+        "aarch64-linux"
+      ] (s: inputs.nixos-stable.legacyPackages.${s}.extend self.overlays.default);
 
       # Individual gigpkgs packages for direct access (e.g. `nix build .#locker`)
       packages.${system} = import ./pkgs { inherit pkgs; };

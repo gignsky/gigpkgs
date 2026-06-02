@@ -3,18 +3,16 @@
 #
 
 { inputs, ... }:
-{
-  # This one brings our custom packages from the 'pkgs' directory
+let
   additions = final: _prev: import ../pkgs { pkgs = final; };
+in
+{
+  # Adds all gigpkgs custom packages as top-level pkgs attributes.
+  # This is the canonical overlay for downstream consumers.
+  default = additions;
 
-  # # This one contains whatever you want to overlay
-  # # You can change versions, add patches, set compilation flags, anything really.
-  # # https://wiki.nixos.org/wiki/Overlays
-  # modifications = final: prev: {
-  #   # example = prev.example.overrideAttrs (oldAttrs: let ... in {
-  #   # ...
-  #   # });
-  # };
+  # Named alias kept for compatibility
+  inherit additions;
 
   # When applied, the unstable nixpkgs set (declared in the flake inputs) will
   # be accessible through 'pkgs.unstable'
@@ -24,11 +22,4 @@
       config.allowUnfree = true;
     };
   };
-
-  # # wrap packages overlay example
-  # wrap-packages = final: _prev: {
-  #   wrap = {
-  #     recursive-tarballs = inputs.wrap.packages.${final.system}.default;
-  #   };
-  # };
 }
