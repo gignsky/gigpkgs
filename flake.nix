@@ -165,7 +165,7 @@
           }
           ++ [
             self.packages.${system}.gigpkgs-news
-            self.packages.${system}.add-input
+            self.packages.${system}.gigpkgs-input
           ];
         shellHook = ''
           ${self.pre-commit-check.shellHook}
