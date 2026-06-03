@@ -1,4 +1,4 @@
-# Home Manager module for gigpkgs-news
+# Home Manager module for gignews
 #
 # Displays unread news entries during home-manager activation.
 # Users can disable this with: gigpkgs.news.enable = false;
@@ -21,8 +21,8 @@ let
       # Fallback: build news from source (used when testing or developing)
       (import ../../news { inherit lib pkgs; }).json;
 
-  # Build gigpkgs-news package with the news JSON
-  gigpkgs-news = pkgs.callPackage ../../pkgs/programs/gigpkgs-news {
+  # Build gignews package with the news JSON
+  gignews = pkgs.callPackage ../../pkgs/programs/gignews {
     newsJson = news;
   };
 
@@ -41,12 +41,12 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Make gigpkgs-news available in user's PATH
-    home.packages = [ gigpkgs-news ];
+    # Make gignews available in user's PATH
+    home.packages = [ gignews ];
 
     # Show unread news during activation
     home.activation.gigpkgsNews = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      run ${gigpkgs-news}/bin/gigpkgs-news
+      run ${gignews}/bin/gignews
     '';
   };
 }

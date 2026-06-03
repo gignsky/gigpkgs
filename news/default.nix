@@ -49,7 +49,7 @@ in
 
   # Generate a JSON file containing all news entries
   # This is used by the CLI and activation script
-  json = pkgs.writeText "gigpkgs-news.json" (builtins.toJSON sortedEntries);
+  json = pkgs.writeText "gignews.json" (builtins.toJSON sortedEntries);
 
   # For testing: return the raw list
   inherit allEntries applicableEntries;

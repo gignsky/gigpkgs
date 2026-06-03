@@ -1,5 +1,5 @@
 #!/usr/bin/env nu
-# gigpkgs-news — View and manage gigpkgs news entries
+# gignews — View and manage gigpkgs news entries
 
 # Get state directory
 def state-dir [] {
@@ -80,7 +80,7 @@ def show-unread [news_file: string] {
             display-entry $entry false
         }
         
-        print $"(ansi cyan)($unread | length) unread entries. Use 'gigpkgs-news read-all' to mark all as read.(ansi reset)"
+        print $"(ansi cyan)($unread | length) unread entries. Use 'gignews read-all' to mark all as read.(ansi reset)"
     }
 }
 

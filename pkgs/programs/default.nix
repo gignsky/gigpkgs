@@ -14,7 +14,7 @@
       }
     else
       pkgs.writeShellScriptBin "gignews" ''
-        echo "gigpkgs-news: newsJson not provided, cannot build package"
+        echo "gignews: newsJson not provided, cannot build package"
         exit 1
       '';
   locker = import ./locker.nix { inherit pkgs; };
