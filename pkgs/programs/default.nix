@@ -1,6 +1,22 @@
-{ pkgs, ... }:
+{
+  pkgs,
+  newsJson ? null,
+  ...
+}:
 {
   cargo-update = import ./cargo-update.nix { inherit pkgs; };
+  gigpkgs-news =
+    if newsJson != null then
+      import ./gigpkgs-news {
+        inherit pkgs;
+        inherit (pkgs) lib;
+        inherit newsJson;
+      }
+    else
+      pkgs.writeShellScriptBin "gigpkgs-news" ''
+        echo "gigpkgs-news: newsJson not provided, cannot build package"
+        exit 1
+      '';
   locker = import ./locker.nix { inherit pkgs; };
   quick-results = import ./quick-results.nix { inherit pkgs; };
   supertree = import ./supertree.nix { inherit pkgs; };
