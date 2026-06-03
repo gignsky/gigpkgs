@@ -36,7 +36,7 @@
     }@inputs:
     let
       # inherit (self) outputs;
-      inherit (nixpkgs) lib;
+      lib = nixpkgs.lib.extend (_final: prev: import ./lib { lib = prev; });
       system = "x86_64-linux";
 
       # Build the super nixpkgs set:
@@ -50,8 +50,9 @@
       };
     in
     {
-      # Re-export nixpkgs lib so consumers can use gigpkgs.lib.nixosSystem, etc.
-      inherit (nixpkgs) lib;
+      # Extended lib — all of nixpkgs.lib plus gigpkgs helpers (scanPaths, scanPathsNuShell).
+      # Consumers: inputs.gigpkgs.lib.scanPaths
+      inherit lib;
 
       # LegacyPackages — nixos-stable extended with gigpkgs custom packages.
       # Use inputs.gigpkgs.legacyPackages.${system} in consuming flakes as a
