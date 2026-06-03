@@ -21,30 +21,42 @@
 }:
 
 let
-  # Read the pinned nixpkgs from flake.lock
   lock = builtins.fromJSON (builtins.readFile ./flake.lock);
   rootNode = lock.nodes.${lock.root};
-  nixpkgsInput = rootNode.inputs.nixpkgs;
-  nixpkgsKey = if builtins.isList nixpkgsInput then builtins.head nixpkgsInput else nixpkgsInput;
-  nixpkgsInfo = lock.nodes.${nixpkgsKey}.locked;
 
-  # Fetch the exact pinned nixpkgs revision
-  nixpkgsSrc = builtins.fetchTree {
-    type = "github";
-    inherit (nixpkgsInfo)
-      owner
-      repo
-      rev
-      narHash
-      ;
-  };
+  fetchNode =
+    inputName:
+    let
+      key =
+        let
+          v = rootNode.inputs.${inputName};
+        in
+        if builtins.isList v then builtins.head v else v;
+      info = lock.nodes.${key}.locked;
+    in
+    builtins.fetchTree {
+      type = "github";
+      inherit (info)
+        owner
+        repo
+        rev
+        narHash
+        ;
+    };
 
-  # Build nixpkgs with gigpkgs overlays applied
+  nixpkgsSrc = fetchNode "nixpkgs";
+  nixpkgsUnstableSrc = fetchNode "nixpkgs-unstable";
+
   pkgs = import nixpkgsSrc {
     inherit system config;
     overlays = overlays ++ [
-      (import ./overlays).additions
-      (import ./overlays).unstable-packages
+      (final: _prev: import ./pkgs { pkgs = final; })
+      (_final: _prev: {
+        unstable = import nixpkgsUnstableSrc {
+          inherit system;
+          config.allowUnfree = true;
+        };
+      })
     ];
   };
 in

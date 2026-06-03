@@ -42,7 +42,7 @@
     }@inputs:
     let
       # inherit (self) outputs;
-      inherit (nixpkgs) lib;
+      lib = nixpkgs.lib.extend (_final: prev: import ./lib { lib = prev; });
       system = "x86_64-linux";
 
       # Build the super nixpkgs set:
@@ -54,10 +54,16 @@
         };
         overlays = builtins.attrValues (import ./overlays { inherit inputs; });
       };
+
+      # News system — collect and expose news entries
+      news = import ./news {
+        inherit lib pkgs;
+      };
     in
     {
-      # Re-export nixpkgs lib so consumers can use gigpkgs.lib.nixosSystem, etc.
-      inherit (nixpkgs) lib;
+      # Extended lib — all of nixpkgs.lib plus gigpkgs helpers (scanPaths, scanPathsNuShell).
+      # Consumers: inputs.gigpkgs.lib.scanPaths
+      inherit lib;
 
       # LegacyPackages — nixos-stable extended with gigpkgs custom packages.
       # Use inputs.gigpkgs.legacyPackages.${system} in consuming flakes as a
@@ -68,10 +74,22 @@
       ] (s: inputs.nixos-stable.legacyPackages.${s}.extend self.overlays.default);
 
       # Individual gigpkgs packages for direct access (e.g. `nix build .#locker`)
-      packages.${system} = import ./pkgs { inherit pkgs; };
+      packages.${system} = import ./pkgs {
+        inherit pkgs;
+        newsJson = news.json;
+      };
 
       # Overlays for independent use in other flakes
       overlays = import ./overlays { inherit inputs; };
+
+      # Expose news for consumers
+      inherit news;
+
+      # Home Manager modules
+      homeModules = {
+        gigpkgs-news = import ./modules/home/gigpkgs-news.nix;
+        default = import ./modules/home/gigpkgs-news.nix;
+      };
 
       # Pre-commit hooks for this repo
       pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
@@ -122,26 +140,28 @@
       devShells.${system}.default = pkgs.mkShell {
         NIX_CONFIG = "extra-experimental-features = nix-command flakes";
 
-        nativeBuildInputs = builtins.attrValues {
-          inherit (pkgs)
-            git
-            pre-commit
-            lolcat
-            nixfmt
-            nil
-            just
-            lazygit
-            statix
-            deadnix
-            nix
-            fzf
-            quick-results
-            upjust
-            locker
-            ripgrep
-            upignore
-            ;
-        };
+        nativeBuildInputs =
+          builtins.attrValues {
+            inherit (pkgs)
+              git
+              pre-commit
+              lolcat
+              nixfmt
+              nil
+              just
+              lazygit
+              statix
+              deadnix
+              nix
+              fzf
+              quick-results
+              upjust
+              locker
+              ripgrep
+              upignore
+              ;
+          }
+          ++ [ self.packages.${system}.gigpkgs-news ];
         shellHook = ''
           ${self.pre-commit-check.shellHook}
 

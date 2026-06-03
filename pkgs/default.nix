@@ -2,11 +2,12 @@
 
 {
   pkgs ? import <nixpkgs> { },
+  newsJson ? null,
 }:
 let
-  # Import packaged scripts
-  scripts = import ./scripts.nix { inherit pkgs; };
-  programs = import ./programs { inherit pkgs; };
+  programs = import ./programs {
+    inherit pkgs newsJson;
+  };
 in
 rec {
   # {
@@ -28,6 +29,7 @@ rec {
   # Import all packaged scripts from programs/
   inherit (programs)
     cargo-update
+    gigpkgs-news
     locker
     quick-results
     supertree
