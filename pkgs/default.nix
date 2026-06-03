@@ -29,7 +29,7 @@ rec {
   # Import all packaged scripts from programs/
   inherit (programs)
     cargo-update
-    gigpkgs-news
+    gignews
     locker
     quick-results
     supertree

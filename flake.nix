@@ -81,8 +81,8 @@
 
       # Home Manager modules
       homeModules = {
-        gigpkgs-news = import ./modules/home/gigpkgs-news.nix;
-        default = import ./modules/home/gigpkgs-news.nix;
+        gignews = import ./modules/home/gignews.nix;
+        default = import ./modules/home/gignews.nix;
       };
 
       # Pre-commit hooks for this repo
@@ -155,7 +155,7 @@
               upignore
               ;
           }
-          ++ [ self.packages.${system}.gigpkgs-news ];
+          ++ [ self.packages.${system}.gignews ];
         shellHook = ''
           ${self.pre-commit-check.shellHook}
 
