@@ -5,7 +5,7 @@
 }:
 
 pkgs.stdenv.mkDerivation {
-  pname = "gigpkgs-news";
+  pname = "gignews";
   version = "0.1.0";
 
   src = ./.;
@@ -16,13 +16,13 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $out/bin
 
     # Substitute the news JSON path into the script
-    substitute ${./gigpkgs-news.nu} $out/bin/gigpkgs-news \
+    substitute ${./gignews.nu} $out/bin/gignews \
       --replace "@NEWS_JSON@" "${newsJson}"
 
-    chmod +x $out/bin/gigpkgs-news
+    chmod +x $out/bin/gignews
 
     # Wrap with nushell
-    wrapProgram $out/bin/gigpkgs-news \
+    wrapProgram $out/bin/gignews \
       --prefix PATH : ${lib.makeBinPath [ pkgs.nushell ]}
   '';
 

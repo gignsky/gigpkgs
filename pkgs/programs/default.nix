@@ -5,15 +5,15 @@
 }:
 {
   cargo-update = import ./cargo-update.nix { inherit pkgs; };
-  gigpkgs-news =
+  gignews =
     if newsJson != null then
-      import ./gigpkgs-news {
+      import ./gignews {
         inherit pkgs;
         inherit (pkgs) lib;
         inherit newsJson;
       }
     else
-      pkgs.writeShellScriptBin "gigpkgs-news" ''
+      pkgs.writeShellScriptBin "gignews" ''
         echo "gigpkgs-news: newsJson not provided, cannot build package"
         exit 1
       '';
