@@ -169,7 +169,10 @@ def prompt-name [suggested: string] {
 # Check if input exists in flake.nix
 def input-exists [name: string] {
     let flake_content = open flake.nix
-    $flake_content | str contains $"($name).url"
+    # Check for pattern like: name = { followed by url =
+    # This handles both single-line and multi-line input definitions
+    let pattern = $"($name) ="
+    $flake_content | str contains $pattern
 }
 
 # Extract available packages from outputs
@@ -528,23 +531,47 @@ def "main add" [
 
 # REMOVE command - remove an existing input
 def "main remove" [
-    name: string  # Input name to remove
+    name_or_url: string  # Input name or URL to remove
 ] {
     print $"(ansi cyan_bold)═══════════════════════════════════════════(ansi reset)"
     print $"(ansi cyan_bold)   gigpkgs-input remove — Remove Input    (ansi reset)"
     print $"(ansi cyan_bold)═══════════════════════════════════════════(ansi reset)"
     print ""
     
+    # If it looks like a URL, extract the name
+    let name = if ($name_or_url | str contains "/") {
+        let extracted = suggest-name $name_or_url
+        status $"Extracted input name from URL: (ansi cyan)($extracted)(ansi reset)" "yellow"
+        $extracted
+    } else {
+        $name_or_url
+    }
+    
     # Check if input exists
     if not (input-exists $name) {
         error $"Input '($name)' not found in flake.nix"
+        print ""
+        print "Available inputs:"
+        let flake_content = open flake.nix
+        let input_lines = $flake_content | lines | where { |line| $line =~ '\.url = "' } 
+        for line in $input_lines {
+            let parsed = $line | parse "{before}{name}.url = \"{url}\"{after}"
+            if ($parsed | length) > 0 {
+                let entry = $parsed | first
+                print $"  - (ansi cyan)($entry.name | str trim)(ansi reset) → ($entry.url)"
+            }
+        }
         exit 1
     }
     
-    # Get current URL for news entry
+    # Get current URL for news entry  
     let flake_content = open flake.nix
-    let url_line = $flake_content | lines | find $"($name).url" | first
-    let url = $url_line | parse "{before}url = \"{url}\"{after}" | get url.0
+    let lines = $flake_content | lines
+    let input_idx = $lines | enumerate | where { |it| $it.item | str contains $"($name) =" } | first | get index
+    # Look for url in the next few lines after the input declaration
+    let url_line = $lines | skip $input_idx | take 5 | where { |line| $line =~ 'url =' } | first
+    # Extract URL from line like:   url = "github:owner/repo";
+    let url = $url_line | str trim | str replace 'url = "' '' | str replace '";' '' | str trim
     
     print $"(ansi yellow_bold)Warning:(ansi reset) This will remove input '(ansi red)($name)(ansi reset)'"
     print $"  Source: ($url)"
@@ -583,23 +610,45 @@ def "main remove" [
 
 # UPDATE command - update an existing input
 def "main update" [
-    name: string  # Input name to update
+    name_or_url: string  # Input name or URL to update
 ] {
     print $"(ansi cyan_bold)═══════════════════════════════════════════(ansi reset)"
     print $"(ansi cyan_bold)   gigpkgs-input update — Update Input    (ansi reset)"
     print $"(ansi cyan_bold)═══════════════════════════════════════════(ansi reset)"
     print ""
     
+    # If it looks like a URL, extract the name
+    let name = if ($name_or_url | str contains "/") {
+        let extracted = suggest-name $name_or_url
+        status $"Extracted input name from URL: (ansi cyan)($extracted)(ansi reset)" "yellow"
+        $extracted
+    } else {
+        $name_or_url
+    }
+    
     # Check if input exists
     if not (input-exists $name) {
         error $"Input '($name)' not found in flake.nix"
+        print ""
+        print "Available inputs:"
+        let flake_content = open flake.nix
+        let input_lines = $flake_content | lines | where { |line| $line =~ '\.url = "' } 
+        for line in $input_lines {
+            let parsed = $line | parse "{before}{name}.url = \"{url}\"{after}"
+            if ($parsed | length) > 0 {
+                let entry = $parsed | first
+                print $"  - (ansi cyan)($entry.name | str trim)(ansi reset) → ($entry.url)"
+            }
+        }
         exit 1
     }
     
     # Get current URL
     let flake_content = open flake.nix
-    let url_line = $flake_content | lines | find $"($name).url" | first
-    let url = $url_line | parse "{before}url = \"{url}\"{after}" | get url.0
+    let lines = $flake_content | lines
+    let input_idx = $lines | enumerate | where { |it| $it.item | str contains $"($name) =" } | first | get index
+    let url_line = $lines | skip $input_idx | take 5 | where { |line| $line =~ 'url =' } | first
+    let url = $url_line | str trim | str replace 'url = "' '' | str replace '";' '' | str trim
     
     print $"(ansi green_bold)Updating input:(ansi reset) ($name)"
     print $"  Source: ($url)"
@@ -715,9 +764,15 @@ def main [] {
     print $"(ansi cyan_bold)gigpkgs-input — Manage flake inputs(ansi reset)"
     print ""
     print "Usage:"
-    print "  gigpkgs-input add <url>       Add a new flake input"
-    print "  gigpkgs-input remove <name>   Remove an existing input"
-    print "  gigpkgs-input update <name>   Update an input (re-probe for changes)"
+    print "  gigpkgs-input add <url>             Add a new flake input"
+    print "  gigpkgs-input remove <name|url>     Remove an existing input"
+    print "  gigpkgs-input update <name|url>     Update an input (re-probe for changes)"
+    print ""
+    print "Examples:"
+    print "  gigpkgs-input add github:owner/repo"
+    print "  gigpkgs-input remove repo"
+    print "  gigpkgs-input remove github:owner/repo  # Also works"
+    print "  gigpkgs-input update repo"
     print ""
     exit 1
 }
