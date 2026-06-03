@@ -4,7 +4,12 @@
 
 { inputs, ... }:
 let
-  additions = final: _prev: import ../pkgs { pkgs = final; };
+  additions =
+    final: _prev:
+    import ../pkgs {
+      pkgs = final;
+      inherit inputs;
+    };
 in
 {
   # Adds all gigpkgs custom packages as top-level pkgs attributes.

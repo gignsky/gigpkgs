@@ -75,7 +75,7 @@
 
       # Individual gigpkgs packages for direct access (e.g. `nix build .#locker`)
       packages.${system} = import ./pkgs {
-        inherit pkgs;
+        inherit pkgs lib inputs;
         newsJson = news.json;
       };
 
@@ -133,7 +133,9 @@
           self
           pkgs
           lib
+          inputs
           ;
+        newsJson = news.json;
       };
 
       # Dev shell for working on gigpkgs
@@ -161,7 +163,10 @@
               upignore
               ;
           }
-          ++ [ self.packages.${system}.gigpkgs-news ];
+          ++ [
+            self.packages.${system}.gigpkgs-news
+            self.packages.${system}.add-input
+          ];
         shellHook = ''
           ${self.pre-commit-check.shellHook}
 

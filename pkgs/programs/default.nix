@@ -4,6 +4,10 @@
   ...
 }:
 {
+  add-input = import ./add-input {
+    inherit pkgs;
+    inherit (pkgs) lib;
+  };
   cargo-update = import ./cargo-update.nix { inherit pkgs; };
   gigpkgs-news =
     if newsJson != null then
