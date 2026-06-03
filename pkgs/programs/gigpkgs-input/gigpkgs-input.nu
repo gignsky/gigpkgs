@@ -199,7 +199,7 @@ def prompt-alias [package: string, input_name: string] {
         $"($input_name)-($package)"
     }
     
-    print $"Alias for package '(ansi cyan)($package)(ansi reset)' (suggested: (ansi green)($suggested)(ansi reset)):"
+    print $"Alias for package '(ansi cyan)($package)(ansi reset)' \(suggested: (ansi green)($suggested)(ansi reset)\):"
     let custom = input "> "
     
     if ($custom | str trim | is-empty) {
