@@ -62,7 +62,6 @@ rec {
   inherit (programs)
     add-input
     cargo-update
-    gigpkgs-input
     gigpkgs-news
     locker
     quick-results

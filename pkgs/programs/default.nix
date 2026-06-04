@@ -4,15 +4,11 @@
   ...
 }:
 {
-  add-input = import ./gigpkgs-input {
+  add-input = import ./add-input {
     inherit pkgs;
     inherit (pkgs) lib;
   };
   cargo-update = import ./cargo-update.nix { inherit pkgs; };
-  gigpkgs-input = import ./gigpkgs-input {
-    inherit pkgs;
-    inherit (pkgs) lib;
-  };
   gigpkgs-news =
     if newsJson != null then
       import ./gigpkgs-news {
