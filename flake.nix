@@ -69,7 +69,7 @@
 
       # Individual gigpkgs packages for direct access (e.g. `nix build .#locker`)
       packages.${system} = import ./pkgs {
-        inherit pkgs;
+        inherit pkgs inputs system;
         newsJson = news.json;
       };
 
@@ -79,11 +79,11 @@
       # Expose news for consumers
       inherit news;
 
-      # Home Manager modules
-      homeModules = {
-        gignews = import ./modules/home/gignews.nix;
-        default = import ./modules/home/gignews.nix;
-      };
+      # NixOS modules — auto-discovered from modules/nixos/
+      nixosModules = import ./modules/nixos { inherit lib; };
+
+      # Home Manager modules — auto-discovered from modules/home/
+      homeModules = import ./modules/home { inherit lib; };
 
       # Pre-commit hooks for this repo
       pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
