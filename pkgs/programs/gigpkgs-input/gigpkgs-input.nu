@@ -357,7 +357,7 @@ def patch-flake-remove [input_name: string] {
 }
 
 # Run locker to update flake.lock
-def update-lock [input_name: string = ""] {
+def run-locker [input_name: string = ""] {
     status "Updating flake.lock with locker"
     try {
         locker -y
@@ -365,6 +365,17 @@ def update-lock [input_name: string = ""] {
     } catch {
         error "locker failed. You may need to run it manually."
         exit 1
+    }
+}
+    } else {
+        status $"Updating ($input_name) in flake.lock"
+        try {
+            locker $input_name -y
+            success $"flake.lock updated for ($input_name)"
+        } catch {
+            error $"locker failed for ($input_name)"
+            exit 1
+        }
     }
 }
 
