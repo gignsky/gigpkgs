@@ -218,7 +218,7 @@ def create-branch [name: string, prefix: string = "input"] {
     # Check if we're on main/master
     let current = git branch --show-current | str trim
     if $current != "main" and $current != "master" {
-        print $"(ansi yellow)Warning: Not on main branch \(currently on ($current)\)(ansi reset)"
+        print $"(ansi yellow)Warning: Not on main branch (currently on ($current))(ansi reset)"
         let proceed = input "Continue anyway? (y/N): "
         if ($proceed | str downcase) != "y" {
             exit 0
