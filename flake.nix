@@ -152,6 +152,7 @@
               upjust
               locker
               ripgrep
+              inputman
               upignore
               ;
           }
