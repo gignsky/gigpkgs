@@ -25,8 +25,6 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
-    # Personal Packages
   };
 
   outputs =
