@@ -20,6 +20,7 @@ inputPackages
   inherit (programs)
     cargo-update
     gignews
+    inputman
     locker
     quick-results
     supertree

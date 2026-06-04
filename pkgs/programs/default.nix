@@ -17,6 +17,7 @@
         echo "gignews: newsJson not provided, cannot build package"
         exit 1
       '';
+  inputman = import ./inputMan { inherit pkgs; };
   locker = import ./locker.nix { inherit pkgs; };
   quick-results = import ./quick-results.nix { inherit pkgs; };
   supertree = import ./supertree.nix { inherit pkgs; };
