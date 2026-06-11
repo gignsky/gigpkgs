@@ -103,7 +103,7 @@
             excludes = [ ];
           };
           shellcheck = {
-            enable = false;
+            enable = true;
             excludes = [ ];
           };
           markdownlint = {
