@@ -122,7 +122,9 @@
           "home-manager"
         ],
         "nixpkgs": [
-          "nixpkgs-master"
+          "gigvim",
+          "gigpkgs",
+          "nixpkgs-unstable"
         ],
         "nvf": "nvf",
         "snacks-nvim": "snacks-nvim"
