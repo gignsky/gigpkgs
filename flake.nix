@@ -127,6 +127,7 @@
           self
           pkgs
           lib
+          inputs
           ;
       };
 
