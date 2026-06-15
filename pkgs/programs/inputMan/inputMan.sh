@@ -321,7 +321,9 @@ finalize_commit() {
   local commit_message="$1" auto_commit="$2" no_commit="$3"
 
   # pre-commit check
+  info "Running pre-commit checks..."
   pre-commit run --all-files
+  info "Pre-commit checks finished."
 
   if git diff --cached --quiet; then
     warn "No staged changes to commit."
