@@ -472,7 +472,7 @@ cmd_install() {
   info "Generating ${input_file} ..."
   local content
   content=$(generate_input_file "$name" "${pkg_list[@]}")
-  printf '%s' "$content" > "$input_file"
+  printf '%s' "$content" >>"$input_file"
   ok "Wrote ${input_file}"
 
   info "Adding input to flake.nix ..."
