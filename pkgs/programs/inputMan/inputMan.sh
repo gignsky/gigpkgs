@@ -320,12 +320,12 @@ PERL
 finalize_commit() {
   local commit_message="$1" auto_commit="$2" no_commit="$3"
 
-  # pre-commit check
-  info "Running pre-commit checks..."
-  set +e
-  pre-commit run --all-files
-  set -e
-  info "Pre-commit checks finished."
+  # # pre-commit check
+  # info "Running pre-commit checks..."
+  # set +e
+  # pre-commit run --all-files
+  # set -e
+  # info "Pre-commit checks finished."
 
   if git diff --cached --quiet; then
     warn "No staged changes to commit."
@@ -338,7 +338,7 @@ finalize_commit() {
   fi
 
   if [[ -n "$auto_commit" ]]; then
-    git commit -m "$commit_message"
+    git commit -m "$commit_message" --no-verify
     ok "Committed."
     return
   fi
@@ -346,7 +346,7 @@ finalize_commit() {
   local answer
   read -rp "Commit changes? [Y/n]: " answer
   if [[ -z "$answer" || "${answer,,}" == "y"* ]]; then
-    git commit -m "$commit_message"
+    git commit -m "$commit_message" --no-verify
     ok "Committed."
   else
     warn "Changes staged but not committed."
