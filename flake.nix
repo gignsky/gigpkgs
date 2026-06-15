@@ -26,8 +26,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
   
-    gigvim.url = "github:gignsky/gigvim";
-    gigvim.inputs.nixpkgs.follows = "nixpkgs-master";
 };
 
   outputs =
