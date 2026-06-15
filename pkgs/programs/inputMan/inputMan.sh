@@ -320,6 +320,9 @@ PERL
 finalize_commit() {
   local commit_message="$1" auto_commit="$2" no_commit="$3"
 
+  # pre-commit check
+  pre-commit run --all-files
+
   if git diff --cached --quiet; then
     warn "No staged changes to commit."
     return

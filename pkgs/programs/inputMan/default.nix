@@ -20,6 +20,7 @@ let
             pkgs.git
             pkgs.jq
             pkgs.perl
+            pkgs.pre-commit
           ]
         }
     '';
