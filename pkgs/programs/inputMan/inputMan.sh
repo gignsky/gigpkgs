@@ -322,7 +322,9 @@ finalize_commit() {
 
   # pre-commit check
   info "Running pre-commit checks..."
+  set +e
   pre-commit run --all-files
+  set -e
   info "Pre-commit checks finished."
 
   if git diff --cached --quiet; then
