@@ -8,9 +8,12 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 info() { printf "${BLUE}[inputMan]${NC} %s\n" "$*"; }
-ok()   { printf "${GREEN}[inputMan]${NC} %s\n" "$*"; }
+ok() { printf "${GREEN}[inputMan]${NC} %s\n" "$*"; }
 warn() { printf "${YELLOW}[inputMan]${NC} %s\n" "$*" >&2; }
-die()  { printf "${RED}[inputMan] error:${NC} %s\n" "$*" >&2; exit 1; }
+die() {
+  printf "${RED}[inputMan] error:${NC} %s\n" "$*" >&2
+  exit 1
+}
 
 usage() {
   cat <<'EOF_USAGE'
@@ -55,8 +58,8 @@ discover_packages() {
   local url="$1" system="$2"
   local pkgs=""
 
-  if ! pkgs=$(nix flake show "$url" --json 2>/dev/null \
-    | jq -r --arg sys "$system" '.packages[$sys] // {} | keys[]' 2>/dev/null); then
+  if ! pkgs=$(nix flake show "$url" --json 2>/dev/null |
+    jq -r --arg sys "$system" '.packages[$sys] // {} | keys[]' 2>/dev/null); then
     warn "Package discovery failed for '${url}', falling back to package 'default'."
   fi
 
@@ -97,10 +100,10 @@ show_input_metadata() {
     return
   fi
 
-  description=$(jq -r '.description // "n/a"' <<< "$metadata")
-  resolved_url=$(jq -r '.resolvedUrl // .resolved.url // .originalUrl // "n/a"' <<< "$metadata")
-  rev=$(jq -r '.revision // .locked.rev // "n/a"' <<< "$metadata")
-  last_modified=$(jq -r '.lastModified // .locked.lastModified // "n/a"' <<< "$metadata")
+  description=$(jq -r '.description // "n/a"' <<<"$metadata")
+  resolved_url=$(jq -r '.resolvedUrl // .resolved.url // .originalUrl // "n/a"' <<<"$metadata")
+  rev=$(jq -r '.revision // .locked.rev // "n/a"' <<<"$metadata")
+  last_modified=$(jq -r '.lastModified // .locked.lastModified // "n/a"' <<<"$metadata")
 
   info "Input metadata"
   info "  description : ${description}"
@@ -134,7 +137,8 @@ patch_flake_add() {
   done
 
   local perl_script
-  perl_script=$(cat <<'PERL'
+  perl_script=$(
+    cat <<'PERL'
     use strict;
     use warnings;
 
@@ -212,7 +216,7 @@ patch_flake_add() {
     my $insert = "\n" . join("\n", @insert_lines) . "\n";
     substr($_, $close_pos, 0, $insert);
 PERL
-)
+  )
 
   local err_file
   err_file=$(mktemp)
@@ -229,7 +233,8 @@ PERL
 patch_flake_remove() {
   local name="$1"
   local perl_script
-  perl_script=$(cat <<'PERL'
+  perl_script=$(
+    cat <<'PERL'
     use strict;
     use warnings;
 
@@ -297,7 +302,7 @@ patch_flake_remove() {
 
     substr($_, $inner_start, $inner_len, $inner);
 PERL
-)
+  )
 
   local err_file
   err_file=$(mktemp)
@@ -362,12 +367,12 @@ create_feature_branch() {
     if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
       git fetch --unshallow origin >/dev/null 2>&1 || die "Failed to fetch full history from origin"
     fi
-    git fetch origin main:refs/remotes/origin/main >/dev/null 2>&1 \
-      || die "Failed to fetch origin/main"
+    git fetch origin main:refs/remotes/origin/main >/dev/null 2>&1 ||
+      die "Failed to fetch origin/main"
   fi
 
-  git checkout -b "$branch" refs/remotes/origin/main >/dev/null 2>&1 \
-    || die "Failed to create branch '${branch}' from origin/main"
+  git checkout -b "$branch" refs/remotes/origin/main >/dev/null 2>&1 ||
+    die "Failed to create branch '${branch}' from origin/main"
   ok "Created and switched to branch '${branch}'"
 }
 
@@ -405,21 +410,43 @@ cmd_install() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --name)           name="$2";               shift 2 ;;
-      --packages)       packages_override="$2";  shift 2 ;;
-      --follows)        validate_follows_pair "$2"; follows_pairs+=("$2"); shift 2 ;;
-      --no-info)        no_info=1;                shift   ;;
-      --no-branch)      no_branch=1;              shift   ;;
-      --yes|-y)         auto_commit=1;            shift   ;;
-      --no-commit|-n)   no_commit=1;              shift   ;;
-      -*)               die "Unknown option: $1" ;;
-      *)
-        if [[ -n "$url" ]]; then
-          die "Only one URL may be provided"
-        fi
-        url="$1"
-        shift
-        ;;
+    --name)
+      name="$2"
+      shift 2
+      ;;
+    --packages)
+      packages_override="$2"
+      shift 2
+      ;;
+    --follows)
+      validate_follows_pair "$2"
+      follows_pairs+=("$2")
+      shift 2
+      ;;
+    --no-info)
+      no_info=1
+      shift
+      ;;
+    --no-branch)
+      no_branch=1
+      shift
+      ;;
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    -*) die "Unknown option: $1" ;;
+    *)
+      if [[ -n "$url" ]]; then
+        die "Only one URL may be provided"
+      fi
+      url="$1"
+      shift
+      ;;
     esac
   done
 
@@ -459,7 +486,7 @@ cmd_install() {
 
   local -a pkg_list=()
   if [[ -n "$packages_override" ]]; then
-    IFS=',' read -ra pkg_list <<< "$packages_override"
+    IFS=',' read -ra pkg_list <<<"$packages_override"
   else
     info "Discovering packages from ${url} ..."
     while IFS= read -r line; do
@@ -499,16 +526,22 @@ cmd_update() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --yes|-y)       auto_commit=1; shift ;;
-      --no-commit|-n) no_commit=1;   shift ;;
-      -*)             die "Unknown option: $1" ;;
-      *)
-        if [[ -n "$name" ]]; then
-          die "Only one input name may be provided"
-        fi
-        name="$1"
-        shift
-        ;;
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    -*) die "Unknown option: $1" ;;
+    *)
+      if [[ -n "$name" ]]; then
+        die "Only one input name may be provided"
+      fi
+      name="$1"
+      shift
+      ;;
     esac
   done
 
@@ -528,16 +561,22 @@ cmd_remove() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --yes|-y)       auto_commit=1; shift ;;
-      --no-commit|-n) no_commit=1;   shift ;;
-      -*)             die "Unknown option: $1" ;;
-      *)
-        if [[ -n "$name" ]]; then
-          die "Only one input name may be provided"
-        fi
-        name="$1"
-        shift
-        ;;
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    -*) die "Unknown option: $1" ;;
+    *)
+      if [[ -n "$name" ]]; then
+        die "Only one input name may be provided"
+      fi
+      name="$1"
+      shift
+      ;;
     esac
   done
 
@@ -558,13 +597,39 @@ cmd_remove() {
 }
 
 case "${1:-help}" in
-  install)              shift; cmd_install "$@" ;;
-  update)               shift; cmd_update "$@" ;;
-  remove)               shift; cmd_remove "$@" ;;
-  __infer-name)         shift; [[ $# -eq 1 ]] || die "Usage: inputman __infer-name <url>"; infer_name "$1"; echo ;;
-  __discover-packages)  shift; [[ $# -eq 2 ]] || die "Usage: inputman __discover-packages <url> <system>"; discover_packages "$1" "$2" ;;
-  __patch-flake-add)    shift; [[ $# -ge 2 ]] || die "Usage: inputman __patch-flake-add <name> <url> [follows...]"; patch_flake_add "$@" ;;
-  __patch-flake-remove) shift; [[ $# -eq 1 ]] || die "Usage: inputman __patch-flake-remove <name>"; patch_flake_remove "$1" ;;
-  help|-h|--help)       usage ;;
-  *)                    die "Unknown command: ${1}. Run 'inputman help' for usage." ;;
+install)
+  shift
+  cmd_install "$@"
+  ;;
+update)
+  shift
+  cmd_update "$@"
+  ;;
+remove)
+  shift
+  cmd_remove "$@"
+  ;;
+__infer-name)
+  shift
+  [[ $# -eq 1 ]] || die "Usage: inputman __infer-name <url>"
+  infer_name "$1"
+  echo
+  ;;
+__discover-packages)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __discover-packages <url> <system>"
+  discover_packages "$1" "$2"
+  ;;
+__patch-flake-add)
+  shift
+  [[ $# -ge 2 ]] || die "Usage: inputman __patch-flake-add <name> <url> [follows...]"
+  patch_flake_add "$@"
+  ;;
+__patch-flake-remove)
+  shift
+  [[ $# -eq 1 ]] || die "Usage: inputman __patch-flake-remove <name>"
+  patch_flake_remove "$1"
+  ;;
+help | -h | --help) usage ;;
+*) die "Unknown command: ${1}. Run 'inputman help' for usage." ;;
 esac
