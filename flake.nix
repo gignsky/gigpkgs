@@ -26,6 +26,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
   
+
+    roll-flow.url = "github:gignsky/roll-flow/develop";
+    roll-flow.inputs.nixpkgs.follows = "nixpkgs-master";
 };
 
   outputs =
