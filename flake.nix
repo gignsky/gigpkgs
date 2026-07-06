@@ -25,13 +25,12 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-  
 
     roll-flow.url = "github:gignsky/roll-flow/develop";
     roll-flow.inputs.nixpkgs.follows = "nixpkgs-master";
 
     fupdate.url = "github:gignsky/fupdate";
-};
+  };
 
   outputs =
     {

@@ -317,6 +317,73 @@ PERL
   rm -f "$err_file"
 }
 
+write_news_entry() {
+  local action="$1" name="$2" details="$3"
+  local news_dir="news/entries"
+
+  if [[ ! -d "$news_dir" ]]; then
+    warn "News directory '${news_dir}' not present; skipping news entry."
+    return 0
+  fi
+
+  local today
+  today=$(date +%Y-%m-%d)
+
+  local base_id="${today}-inputman-${action}-${name}"
+  local id="$base_id"
+  local n=2
+  while [[ -f "${news_dir}/${id}.nix" ]]; do
+    id="${base_id}-${n}"
+    n=$((n + 1))
+  done
+  local file="${news_dir}/${id}.nix"
+
+  local headline body
+  case "$action" in
+  install)
+    headline="Added flake input '${name}'"
+    body="This input was installed by inputMan and is now available via gigpkgs."
+    ;;
+  update)
+    headline="Updated flake input '${name}'"
+    body="The flake.lock entry for this input was refreshed by inputMan."
+    ;;
+  remove)
+    headline="Removed flake input '${name}'"
+    body="This input was removed from gigpkgs by inputMan."
+    ;;
+  *)
+    warn "Unknown news action '${action}'; skipping news entry."
+    return 0
+    ;;
+  esac
+
+  {
+    printf '{\n'
+    printf '  id = "%s";\n' "$id"
+    printf '  date = "%s";\n' "$today"
+    printf "  message = ''\n"
+    printf '    %s\n' "$headline"
+    printf '\n'
+    printf '    %s\n' "$body"
+    if [[ -n "$details" ]]; then
+      printf '\n'
+      while IFS= read -r line; do
+        if [[ -z "$line" ]]; then
+          printf '\n'
+        else
+          printf '    %s\n' "$line"
+        fi
+      done <<<"$details"
+    fi
+    printf "  '';\n"
+    printf '}\n'
+  } >"$file"
+
+  ok "Wrote news entry ${file}"
+  printf '%s' "$file"
+}
+
 finalize_commit() {
   local commit_message="$1" auto_commit="$2" no_commit="$3"
 
@@ -386,6 +453,7 @@ create_feature_branch() {
 INPUTMAN_CLEANUP_ACTIVE=0
 INPUTMAN_CLEANUP_FILE=""
 INPUTMAN_CLEANUP_FLAKE=0
+INPUTMAN_CLEANUP_NEWS_FILE=""
 
 inputman_install_cleanup() {
   local status="$1"
@@ -400,13 +468,18 @@ inputman_install_cleanup() {
     rolled_back=1
   fi
 
+  if [[ -n "${INPUTMAN_CLEANUP_NEWS_FILE:-}" && -f "${INPUTMAN_CLEANUP_NEWS_FILE}" ]]; then
+    rm -f "${INPUTMAN_CLEANUP_NEWS_FILE}"
+    rolled_back=1
+  fi
+
   if [[ "${INPUTMAN_CLEANUP_FLAKE:-0}" -eq 1 && -f flake.nix ]]; then
     git checkout -- flake.nix >/dev/null 2>&1 || true
     rolled_back=1
   fi
 
   if [[ "$rolled_back" -eq 1 ]]; then
-    warn "Install failed. Rolled back flake.nix and generated input file."
+    warn "Install failed. Rolled back flake.nix, generated input file, and news entry."
   fi
 }
 
@@ -518,13 +591,20 @@ cmd_install() {
   nix flake lock
   ok "flake.lock updated"
 
+  local news_details="Source: ${url}"$'\n'"Packages: ${pkg_list[*]}"
+  local news_file
+  news_file=$(write_news_entry install "$name" "$news_details") || news_file=""
+  INPUTMAN_CLEANUP_NEWS_FILE="$news_file"
+
   git add "$input_file" flake.nix flake.lock
+  [[ -n "$news_file" ]] && git add "$news_file"
 
   finalize_commit "inputMan: add input ${name} (${url})" "$auto_commit" "$no_commit"
 
   INPUTMAN_CLEANUP_ACTIVE=0
   INPUTMAN_CLEANUP_FILE=""
   INPUTMAN_CLEANUP_FLAKE=0
+  INPUTMAN_CLEANUP_NEWS_FILE=""
   trap - RETURN
 }
 
@@ -559,7 +639,11 @@ cmd_update() {
   nix flake lock --update-input "$name"
   ok "flake.lock updated for '${name}'"
 
+  local news_file
+  news_file=$(write_news_entry update "$name" "") || news_file=""
+
   git add flake.lock
+  [[ -n "$news_file" ]] && git add "$news_file"
   finalize_commit "inputMan: update input ${name}" "$auto_commit" "$no_commit"
 }
 
@@ -599,7 +683,11 @@ cmd_remove() {
   nix flake lock
   ok "Removed input '${name}' and updated flake.lock"
 
+  local news_file
+  news_file=$(write_news_entry remove "$name" "") || news_file=""
+
   git add "$input_file" flake.nix flake.lock
+  [[ -n "$news_file" ]] && git add "$news_file"
   finalize_commit "inputMan: remove input ${name}" "$auto_commit" "$no_commit"
 }
 
