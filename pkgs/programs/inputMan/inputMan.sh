@@ -380,7 +380,7 @@ write_news_entry() {
     printf '}\n'
   } >"$file"
 
-  ok "Wrote news entry ${file}"
+  ok "Wrote news entry ${file}" >&2
   printf '%s' "$file"
 }
 
