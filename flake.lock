@@ -134,9 +134,7 @@
         ],
         "nixos-unstable": "nixos-unstable",
         "nixpkgs": [
-          "gigvim",
-          "gigpkgs",
-          "nixos-stable"
+          "nixos-unstable"
         ],
         "nixpkgs-master": [
           "gigvim",
