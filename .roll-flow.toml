@@ -1,0 +1,11 @@
+config_version = 1
+repo_root = "/home/gig/local_repos/gigpkgs"
+rolling_branch = "rolling"
+stable_branch = "main"
+roll_prefix = "roll/"
+username = "gig"
+hosts = []
+roll_to_rolling_gates = []
+rolling_to_main_gates = []
+
+[host_active]
