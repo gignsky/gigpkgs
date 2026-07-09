@@ -61,9 +61,7 @@
         ],
         "nixos-unstable": "nixos-unstable_2",
         "nixpkgs": [
-          "roll-flow",
-          "gigpkgs",
-          "nixpkgs-unstable"
+          "nixpkgs-master"
         ],
         "nixpkgs-master": [
           "roll-flow",
@@ -337,7 +335,8 @@
       "inputs": {
         "gigpkgs": "gigpkgs",
         "nixpkgs": [
-          "nixpkgs-master"
+          "roll-flow",
+          "gigpkgs"
         ],
         "pre-commit-hooks": [
           "roll-flow",
