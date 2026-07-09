@@ -160,6 +160,7 @@
               ripgrep
               inputman
               upignore
+              roll-flow
               ;
           }
           ++ [ self.packages.${system}.gignews ];
