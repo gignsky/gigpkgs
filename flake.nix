@@ -31,7 +31,10 @@
 
     fupdate.url = "github:gignsky/fupdate";
 
-  };
+  
+    gigvim.url = "github:gignsky/gigvim";
+    gigvim.inputs.gigpkgs.follows = "";
+};
 
   outputs =
     {
