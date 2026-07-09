@@ -134,7 +134,7 @@
         ],
         "nixos-unstable": "nixos-unstable",
         "nixpkgs": [
-          "nixos-unstable"
+          "nixpkgs-unstable"
         ],
         "nixpkgs-master": [
           "gigvim",
@@ -215,11 +215,11 @@
         "snacks-nvim": "snacks-nvim"
       },
       "locked": {
-        "lastModified": 1783638105,
-        "narHash": "sha256-AdIlsRfE1jmUt4rtcGBuSXqKSYCqZQaBjnxvBNsIRPQ=",
+        "lastModified": 1783638287,
+        "narHash": "sha256-Wacam1teFUZ4BZoYxhfSFjnIBOg3mn5RRiB6xObU838=",
         "owner": "gignsky",
         "repo": "gigvim",
-        "rev": "33f0c33b6f7c10c68b4cacc60821d488969544ae",
+        "rev": "2428c9f85e9d9c5291fbf6336527973f722db87b",
         "type": "github"
       },
       "original": {
