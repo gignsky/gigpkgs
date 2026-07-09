@@ -422,9 +422,9 @@ current_module_pairs() {
   local name="$1" kind="$2"
   local attr
   case "$kind" in
-    home) attr="homeModules" ;;
-    nixos) attr="nixosModules" ;;
-    *) return 1 ;;
+  home) attr="homeModules" ;;
+  nixos) attr="nixosModules" ;;
+  *) return 1 ;;
   esac
   local file="modules/${kind}/inputs/${name}.nix"
   [[ -f "$file" ]] || return 0
@@ -468,9 +468,9 @@ prompt_package_alias() {
   local answer
   read -rp "      alias [${default_alias}] (blank=default, '-' to skip): " answer </dev/tty
   case "$answer" in
-    "") printf '%s=%s\n' "$pkg" "$default_alias" ;;
-    -) : ;;
-    *) printf '%s=%s\n' "$pkg" "$answer" ;;
+  "") printf '%s=%s\n' "$pkg" "$default_alias" ;;
+  -) : ;;
+  *) printf '%s=%s\n' "$pkg" "$answer" ;;
   esac
 }
 
@@ -487,9 +487,9 @@ prompt_module_alias() {
   local answer
   read -rp "      alias [${default_alias}] (blank=default, '-' to skip): " answer </dev/tty
   case "$answer" in
-    "") printf '%s=%s\n' "$mod" "$default_alias" ;;
-    -) : ;;
-    *) printf '%s=%s\n' "$mod" "$answer" ;;
+  "") printf '%s=%s\n' "$mod" "$default_alias" ;;
+  -) : ;;
+  *) printf '%s=%s\n' "$mod" "$answer" ;;
   esac
 }
 
@@ -714,9 +714,15 @@ maybe_generate_module_aggregator() {
   local name="$1" url="$2" kind="$3" auto_yes="$4"
   local attr subdir
   case "$kind" in
-    home) attr="homeModules"; subdir="modules/home/inputs" ;;
-    nixos) attr="nixosModules"; subdir="modules/nixos/inputs" ;;
-    *) return 1 ;;
+  home)
+    attr="homeModules"
+    subdir="modules/home/inputs"
+    ;;
+  nixos)
+    attr="nixosModules"
+    subdir="modules/nixos/inputs"
+    ;;
+  *) return 1 ;;
   esac
 
   local -a mods=()
@@ -1014,9 +1020,15 @@ append_module_entries() {
   shift 2
   local attr subdir
   case "$kind" in
-    home) attr="homeModules"; subdir="modules/home/inputs" ;;
-    nixos) attr="nixosModules"; subdir="modules/nixos/inputs" ;;
-    *) return 1 ;;
+  home)
+    attr="homeModules"
+    subdir="modules/home/inputs"
+    ;;
+  nixos)
+    attr="nixosModules"
+    subdir="modules/nixos/inputs"
+    ;;
+  *) return 1 ;;
   esac
 
   mkdir -p "$subdir"
@@ -1074,7 +1086,7 @@ cmd_update() {
   [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
 
   info "Updating input '${name}' ..."
-  nix flake lock --update-input "$name"
+  nix flake update "$name"
   ok "flake.lock updated for '${name}'"
 
   local system
@@ -1268,7 +1280,8 @@ cmd_remove() {
 # inputman touched, then commit.  Falls back to a plain commit if pre-commit
 # is not installed or has no config.
 do_commit() {
-  local msg="$1"; shift
+  local msg="$1"
+  shift
   local -a files=("$@")
 
   if command -v pre-commit &>/dev/null; then
