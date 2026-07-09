@@ -691,6 +691,24 @@ cmd_remove() {
   finalize_commit "inputMan: remove input ${name}" "$auto_commit" "$no_commit"
 }
 
+# Run pre-commit on all files (letting hooks reformat), re-stage the files
+# inputman touched, then commit.  Falls back to a plain commit if pre-commit
+# is not installed or has no config.
+do_commit() {
+  local msg="$1"; shift
+  local -a files=("$@")
+
+  if command -v pre-commit &>/dev/null; then
+    info "Running pre-commit hooks ..."
+    pre-commit run --all-files 2>&1 || true
+    git add "${files[@]}"
+    ok "Pre-commit done."
+  fi
+
+  git commit -m "$msg"
+  ok "Committed."
+}
+
 case "${1:-help}" in
 install)
   shift
