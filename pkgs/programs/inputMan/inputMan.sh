@@ -143,7 +143,7 @@ generate_module_file() {
 
   local mod alias
   for mod in "$@"; do
-    if [[ "$mod" == "default" ]]; then
+    if [[ "$mod" == "default" || "$mod" == "$name" ]]; then
       alias="$name"
     else
       alias="${name}-${mod}"
@@ -459,7 +459,7 @@ print_rescan_section() {
 prompt_package_alias() {
   local input_name="$1" pkg="$2"
   local default_alias
-  if [[ "$pkg" == "default" ]]; then
+  if [[ "$pkg" == "default" || "$pkg" == "$input_name" ]]; then
     default_alias="$input_name"
   else
     default_alias="${input_name}-${pkg}"
@@ -478,7 +478,7 @@ prompt_package_alias() {
 prompt_module_alias() {
   local input_name="$1" mod="$2" attr="$3"
   local default_alias
-  if [[ "$mod" == "default" ]]; then
+  if [[ "$mod" == "default" || "$mod" == "$input_name" ]]; then
     default_alias="$input_name"
   else
     default_alias="${input_name}-${mod}"
@@ -512,7 +512,7 @@ parse_packages_spec() {
       [[ "$alias" == "-" ]] && continue
     else
       pkg="$item"
-      if [[ "$pkg" == "default" ]]; then
+      if [[ "$pkg" == "default" || "$pkg" == "$input_name" ]]; then
         alias="$input_name"
       else
         alias="${input_name}-${pkg}"
@@ -528,7 +528,7 @@ default_package_selection() {
   shift
   local pkg alias
   for pkg in "$@"; do
-    if [[ "$pkg" == "default" ]]; then
+    if [[ "$pkg" == "default" || "$pkg" == "$input_name" ]]; then
       alias="$input_name"
     else
       alias="${input_name}-${pkg}"
@@ -733,7 +733,7 @@ maybe_generate_module_aggregator() {
   local mod pair
   if [[ -n "$auto_yes" ]]; then
     for mod in "${mods[@]}"; do
-      if [[ "$mod" == "default" ]]; then
+      if [[ "$mod" == "default" || "$mod" == "$name" ]]; then
         selection+=("${mod}=${name}")
       else
         selection+=("${mod}=${name}-${mod}")
@@ -1109,7 +1109,7 @@ cmd_update() {
       print_rescan_section "packages" "$name" "${existing_pkg_display[@]}"
       for pkg in "${new_pkg_list[@]}"; do
         if [[ -n "$auto_commit" ]]; then
-          if [[ "$pkg" == "default" ]]; then
+          if [[ "$pkg" == "default" || "$pkg" == "$name" ]]; then
             added_pkgs+=("${pkg}=${name}")
           else
             added_pkgs+=("${pkg}=${name}-${pkg}")
@@ -1140,7 +1140,7 @@ cmd_update() {
         print_rescan_section "home modules" "$name" "${existing_home_display[@]}"
         for mod in "${new_home_list[@]}"; do
           if [[ -n "$auto_commit" ]]; then
-            if [[ "$mod" == "default" ]]; then
+            if [[ "$mod" == "default" || "$mod" == "$name" ]]; then
               added_home+=("${mod}=${name}")
             else
               added_home+=("${mod}=${name}-${mod}")
@@ -1170,7 +1170,7 @@ cmd_update() {
         print_rescan_section "nixos modules" "$name" "${existing_nixos_display[@]}"
         for mod in "${new_nixos_list[@]}"; do
           if [[ -n "$auto_commit" ]]; then
-            if [[ "$mod" == "default" ]]; then
+            if [[ "$mod" == "default" || "$mod" == "$name" ]]; then
               added_nixos+=("${mod}=${name}")
             else
               added_nixos+=("${mod}=${name}-${mod}")
