@@ -62,7 +62,8 @@
         "nixos-unstable": "nixos-unstable_2",
         "nixpkgs": [
           "roll-flow",
-          "nixpkgs"
+          "gigpkgs",
+          "nixpkgs-unstable"
         ],
         "nixpkgs-master": [
           "roll-flow",
@@ -345,11 +346,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1781504613,
-        "narHash": "sha256-JRX7Mf+8/ukmsSc0i5J0vRagBFSrLRawaV15hrVjd7I=",
+        "lastModified": 1783483808,
+        "narHash": "sha256-4PHAZB6tRMhyncCMPvH6Kxfzwbz4Ex68lJ1IN/oXTdI=",
         "owner": "gignsky",
         "repo": "roll-flow",
-        "rev": "975b232a2b65518df54310d45eb9d59a7153e8ff",
+        "rev": "af0f8f6c2486dba5356d9299dadaf9133184486e",
         "type": "github"
       },
       "original": {
