@@ -178,6 +178,7 @@
           ${self.pre-commit-check.shellHook}
 
           echo "Welcome to the gigpkgs devShell" | ${pkgs.lolcat}/bin/lolcat
+          gignews
         '';
       };
 
