@@ -31,14 +31,10 @@
 
     fupdate.url = "github:gignsky/fupdate";
 
-    gigvim = {
-      url = "github:gignsky/gigvim";
-      inputs.gigpkgs = {
-        inputs.nixpkgs.follows = "nixos-unstable";
-        follows = "";
-      };
-    };
-  };
+  
+    gigvim.url = "github:gignsky/gigvim";
+    gigvim.inputs.gigpkgs.follows = "";
+};
 
   outputs =
     {
