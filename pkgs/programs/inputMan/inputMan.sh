@@ -417,8 +417,8 @@ current_package_pairs() {
   done <"$file"
 }
 
-# Read module names currently exposed by modules/<home|nixos>/inputs/<name>.nix.
-current_module_names() {
+# Read mod=alias pairs currently exposed by modules/<home|nixos>/inputs/<name>.nix.
+current_module_pairs() {
   local name="$1" kind="$2"
   local attr
   case "$kind" in
@@ -428,15 +428,34 @@ current_module_names() {
   esac
   local file="modules/${kind}/inputs/${name}.nix"
   [[ -f "$file" ]] || return 0
-  local pattern='^\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*inputs\.'"$name"'\.'"$attr"'\.([A-Za-z0-9_-]+);'
+  local pattern='^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*inputs\.'"$name"'\.'"$attr"'\.([A-Za-z0-9_-]+);'
   while IFS= read -r line; do
     if [[ "$line" =~ $pattern ]]; then
-      printf '%s\n' "${BASH_REMATCH[1]}"
+      printf '%s=%s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}"
     fi
   done <"$file"
 }
 
-# Prompt for a single package: emit `pkg=alias` on stdout, or nothing to skip.
+# Render a rescan-section header for `inputman update` output. Streams the
+# announcement + list of currently-exposed entries to stderr so the caller can
+# still capture command output.
+print_rescan_section() {
+  local label="$1" input_name="$2"
+  shift 2
+  printf '\n%b[inputMan]%b %s rescan for %s\n' "$BLUE" "$NC" "$label" "'${input_name}'" >&2
+  if [[ $# -eq 0 ]]; then
+    printf '    %bcurrently exposed:%b (none)\n' "$YELLOW" "$NC" >&2
+  else
+    printf '    %bcurrently exposed:%b\n' "$YELLOW" "$NC" >&2
+    local item
+    for item in "$@"; do
+      printf '      - %s\n' "$item" >&2
+    done
+  fi
+}
+
+# Prompt for a single new package: emits `pkg=alias` on stdout, or nothing to
+# skip. All UI goes to stderr.
 prompt_package_alias() {
   local input_name="$1" pkg="$2"
   local default_alias
@@ -445,8 +464,9 @@ prompt_package_alias() {
   else
     default_alias="${input_name}-${pkg}"
   fi
+  printf '\n    %bnew package:%b %s  (packages.%s)\n' "$YELLOW" "$NC" "$pkg" "$pkg" >&2
   local answer
-  read -rp "  package '${pkg}' — alias (blank=${default_alias}, '-' to skip): " answer </dev/tty
+  read -rp "      alias [${default_alias}] (blank=default, '-' to skip): " answer </dev/tty
   case "$answer" in
     "") printf '%s=%s\n' "$pkg" "$default_alias" ;;
     -) : ;;
@@ -454,17 +474,18 @@ prompt_package_alias() {
   esac
 }
 
-# Prompt for a single module: emit alias on stdout (as `mod=alias`) or skip.
+# Prompt for a single new module: emits `mod=alias` on stdout, or nothing to skip.
 prompt_module_alias() {
-  local input_name="$1" mod="$2"
+  local input_name="$1" mod="$2" attr="$3"
   local default_alias
   if [[ "$mod" == "default" ]]; then
     default_alias="$input_name"
   else
     default_alias="${input_name}-${mod}"
   fi
+  printf '\n    %bnew module:%b %s  (%s.%s)\n' "$YELLOW" "$NC" "$mod" "$attr" "$mod" >&2
   local answer
-  read -rp "  module '${mod}' — alias (blank=${default_alias}, '-' to skip): " answer </dev/tty
+  read -rp "      alias [${default_alias}] (blank=default, '-' to skip): " answer </dev/tty
   case "$answer" in
     "") printf '%s=%s\n' "$mod" "$default_alias" ;;
     -) : ;;
@@ -579,7 +600,7 @@ write_news_entry() {
     printf '}\n'
   } >"$file"
 
-  ok "Wrote news entry ${file}"
+  ok "Wrote news entry ${file}" >&2
   printf '%s' "$file"
 }
 
@@ -720,7 +741,7 @@ maybe_generate_module_aggregator() {
     done
   else
     for mod in "${mods[@]}"; do
-      pair=$(prompt_module_alias "$name" "$mod" || true)
+      pair=$(prompt_module_alias "$name" "$mod" "$attr" || true)
       [[ -n "$pair" ]] && selection+=("$pair")
     done
   fi
@@ -941,6 +962,7 @@ locked_input_url() {
         if o.type == \"github\" then
           \"github:\${o.owner}/\${o.repo}\" + (if o ? ref then \"/\${o.ref}\" else \"\")
         else if o.type == \"git\" then o.url
+        else if o.type == \"path\" then \"path:\${o.path}\"
         else if o ? url then o.url
         else null
       else null
@@ -1067,20 +1089,25 @@ cmd_update() {
   local -a added_pkgs=() added_home=() added_nixos=()
 
   if [[ -n "$url" ]]; then
-    # Package rescan
-    local -a discovered=()
+    local pair pkg mod
+
+    # ── Package rescan ────────────────────────────────────────────────
+    local -a discovered=() existing_pkg_display=() new_pkg_list=()
+    local -A current_pkg_map=()
     while IFS= read -r line; do
       [[ -n "$line" ]] && discovered+=("$line")
     done < <(discover_packages "$url" "$system")
-
-    local -A current_pkg_map=()
     while IFS= read -r pair; do
-      [[ -n "$pair" ]] && current_pkg_map["${pair%%=*}"]=1
+      [[ -z "$pair" ]] && continue
+      current_pkg_map["${pair%%=*}"]=1
+      existing_pkg_display+=("${pair#*=}  <-  packages.${pair%%=*}")
     done < <(current_package_pairs "$name")
-
-    local pkg pair
     for pkg in "${discovered[@]}"; do
-      if [[ -z "${current_pkg_map[$pkg]:-}" ]]; then
+      [[ -z "${current_pkg_map[$pkg]:-}" ]] && new_pkg_list+=("$pkg")
+    done
+    if [[ ${#new_pkg_list[@]} -gt 0 ]]; then
+      print_rescan_section "packages" "$name" "${existing_pkg_display[@]}"
+      for pkg in "${new_pkg_list[@]}"; do
         if [[ -n "$auto_commit" ]]; then
           if [[ "$pkg" == "default" ]]; then
             added_pkgs+=("${pkg}=${name}")
@@ -1088,28 +1115,30 @@ cmd_update() {
             added_pkgs+=("${pkg}=${name}-${pkg}")
           fi
         else
-          info "New package '${pkg}' found in '${name}'"
           pair=$(prompt_package_alias "$name" "$pkg" || true)
           [[ -n "$pair" ]] && added_pkgs+=("$pair")
         fi
-      fi
-    done
+      done
+    fi
 
     if [[ -z "$no_modules" ]]; then
-      # Module rescan (home)
-      local -a discovered_home=()
+      # ── Home modules rescan ────────────────────────────────────────
+      local -a discovered_home=() existing_home_display=() new_home_list=()
+      local -A current_home_map=()
       while IFS= read -r line; do
         [[ -n "$line" ]] && discovered_home+=("$line")
       done < <(discover_modules "$url" "homeModules")
-
-      local -A current_home_map=()
-      while IFS= read -r mod; do
-        [[ -n "$mod" ]] && current_home_map["$mod"]=1
-      done < <(current_module_names "$name" home)
-
-      local mod
+      while IFS= read -r pair; do
+        [[ -z "$pair" ]] && continue
+        current_home_map["${pair%%=*}"]=1
+        existing_home_display+=("${pair#*=}  <-  homeModules.${pair%%=*}")
+      done < <(current_module_pairs "$name" home)
       for mod in "${discovered_home[@]}"; do
-        if [[ -z "${current_home_map[$mod]:-}" ]]; then
+        [[ -z "${current_home_map[$mod]:-}" ]] && new_home_list+=("$mod")
+      done
+      if [[ ${#new_home_list[@]} -gt 0 ]]; then
+        print_rescan_section "home modules" "$name" "${existing_home_display[@]}"
+        for mod in "${new_home_list[@]}"; do
           if [[ -n "$auto_commit" ]]; then
             if [[ "$mod" == "default" ]]; then
               added_home+=("${mod}=${name}")
@@ -1117,26 +1146,29 @@ cmd_update() {
               added_home+=("${mod}=${name}-${mod}")
             fi
           else
-            info "New home module '${mod}' found in '${name}'"
-            pair=$(prompt_module_alias "$name" "$mod" || true)
+            pair=$(prompt_module_alias "$name" "$mod" "homeModules" || true)
             [[ -n "$pair" ]] && added_home+=("$pair")
           fi
-        fi
-      done
+        done
+      fi
 
-      # Module rescan (nixos)
-      local -a discovered_nixos=()
+      # ── NixOS modules rescan ───────────────────────────────────────
+      local -a discovered_nixos=() existing_nixos_display=() new_nixos_list=()
+      local -A current_nixos_map=()
       while IFS= read -r line; do
         [[ -n "$line" ]] && discovered_nixos+=("$line")
       done < <(discover_modules "$url" "nixosModules")
-
-      local -A current_nixos_map=()
-      while IFS= read -r mod; do
-        [[ -n "$mod" ]] && current_nixos_map["$mod"]=1
-      done < <(current_module_names "$name" nixos)
-
+      while IFS= read -r pair; do
+        [[ -z "$pair" ]] && continue
+        current_nixos_map["${pair%%=*}"]=1
+        existing_nixos_display+=("${pair#*=}  <-  nixosModules.${pair%%=*}")
+      done < <(current_module_pairs "$name" nixos)
       for mod in "${discovered_nixos[@]}"; do
-        if [[ -z "${current_nixos_map[$mod]:-}" ]]; then
+        [[ -z "${current_nixos_map[$mod]:-}" ]] && new_nixos_list+=("$mod")
+      done
+      if [[ ${#new_nixos_list[@]} -gt 0 ]]; then
+        print_rescan_section "nixos modules" "$name" "${existing_nixos_display[@]}"
+        for mod in "${new_nixos_list[@]}"; do
           if [[ -n "$auto_commit" ]]; then
             if [[ "$mod" == "default" ]]; then
               added_nixos+=("${mod}=${name}")
@@ -1144,12 +1176,11 @@ cmd_update() {
               added_nixos+=("${mod}=${name}-${mod}")
             fi
           else
-            info "New nixos module '${mod}' found in '${name}'"
-            pair=$(prompt_module_alias "$name" "$mod" || true)
+            pair=$(prompt_module_alias "$name" "$mod" "nixosModules" || true)
             [[ -n "$pair" ]] && added_nixos+=("$pair")
           fi
-        fi
-      done
+        done
+      fi
     fi
   fi
 
