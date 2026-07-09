@@ -20,30 +20,53 @@ usage() {
 Usage: inputman <command> [options]
 
 Commands:
-  install <url>    Add a flake input and expose its packages
-  update <name>    Update an existing flake input lock entry
-  remove <name>    Remove an existing flake input and generated package file
+  install <url>    Add a flake input and expose its packages + modules
+  update <name>    Refresh a locked input; prompt for new packages/modules
+  remove <name>    Remove a flake input and its generated files
   help             Show this help
 
 Install options:
-  --name <name>        Override the input name (default: inferred from URL)
-  --packages <p1,p2>   Comma-separated packages to install (default: discovered)
-  --follows <k=v>      Add follows override (repeatable)
-  --no-info            Skip flake metadata probe output
-  --no-branch          Skip creating add-input/<name> branch from origin/main
-  --yes, -y            Commit without prompting
-  --no-commit, -n      Stage changes but do not commit
+  --name <name>          Override the input name (default: inferred from URL)
+  --packages, -p <spec>  Package selection. Formats:
+                           pkg=alias,pkg2=alias2   (only listed pkgs exposed)
+                           pkg1,pkg2               (legacy include list)
+                         Bare -p prompts per discovered package.
+  --follows, -f <spec>   Follows override. Formats:
+                           key=target                    (single-level)
+                           parent/child=target           (nested via '/')
+                           parent.child=target           (nested via '.')
+                         Bare -f/--follows sets
+                           <input>.inputs.<self>.follows = ""
+                         where <self> is derived from the current flake name.
+                         Repeatable.
+  --no-info              Skip flake metadata probe output
+  --no-branch            Skip creating add-input/<name> branch from origin/main
+  --no-modules           Skip module auto-discovery
+  --yes, -y              Accept prompts and commit without asking
+  --no-commit, -n        Stage changes but do not commit
 
-Update/remove options:
-  --yes, -y            Commit without prompting
-  --no-commit, -n      Stage changes but do not commit
+Update options:
+  --no-modules           Skip module re-scan
+  --yes, -y              Auto-include new packages/modules with default aliases; commit
+  --no-commit, -n        Stage changes but do not commit
+
+Remove options:
+  --yes, -y              Commit without prompting
+  --no-commit, -n        Stage changes but do not commit
 
 Examples:
   inputman install github:nix-community/nur
-  inputman install github:gignsky/gigvim --follows nixpkgs=nixpkgs --yes
+  inputman install github:gignsky/gigvim -f nixpkgs=nixpkgs --yes
+  inputman install github:gignsky/roll-flow -f gigpkgs/nixpkgs=nixpkgs-master
+  inputman install github:some/flake -f            # follow current gigpkgs
+  inputman install github:gignsky/gigvim -p default=gigvim,nightly=gigvim-nightly
   inputman update gigvim -y
   inputman remove gigvim --no-commit
 EOF_USAGE
+}
+
+self_name() {
+  basename "$(pwd)"
 }
 
 infer_name() {
@@ -54,6 +77,7 @@ infer_name() {
   printf '%s' "$base"
 }
 
+# Discover packages for a given system by probing the input flake.
 discover_packages() {
   local url="$1" system="$2"
   local pkgs=""
@@ -71,7 +95,26 @@ discover_packages() {
   fi
 }
 
+# Discover module names from an input flake for a given output attribute
+# (homeModules or nixosModules). Outputs one name per line, or nothing.
+discover_modules() {
+  local url="$1" attr="$2"
+  local names_json
+  if names_json=$(nix eval --json "${url}#${attr}" --apply 'set: builtins.attrNames set' 2>/dev/null); then
+    echo "$names_json" | jq -r '.[]' 2>/dev/null || true
+    return
+  fi
+  # Legacy attribute name for older home-manager flakes.
+  if [[ "$attr" == "homeModules" ]]; then
+    if names_json=$(nix eval --json "${url}#homeManagerModules" --apply 'set: builtins.attrNames set' 2>/dev/null); then
+      echo "$names_json" | jq -r '.[]' 2>/dev/null || true
+      return
+    fi
+  fi
+}
+
 generate_input_file() {
+  # Args: name, then pkg=alias pairs.
   local name="$1"
   shift
 
@@ -79,13 +122,33 @@ generate_input_file() {
   printf '{ inputs, system }:\n'
   printf '{\n'
 
-  local pkg alias
-  for pkg in "$@"; do
-    alias="$name"
-    if [[ "$pkg" != "default" ]]; then
-      alias="${name}-${pkg}"
-    fi
+  local pair pkg alias
+  for pair in "$@"; do
+    pkg="${pair%%=*}"
+    alias="${pair#*=}"
     printf "  %s = inputs.%s.packages.\${system}.%s;\n" "$alias" "$name" "$pkg"
+  done
+
+  printf '}\n'
+}
+
+generate_module_file() {
+  # Args: input_name, attr (homeModules/nixosModules), then module names.
+  local name="$1" attr="$2"
+  shift 2
+
+  printf '# gigpkgs inputMan: managed %s aggregator\n' "$attr"
+  printf '{ inputs }:\n'
+  printf '{\n'
+
+  local mod alias
+  for mod in "$@"; do
+    if [[ "$mod" == "default" ]]; then
+      alias="$name"
+    else
+      alias="${name}-${mod}"
+    fi
+    printf "  %s = inputs.%s.%s.%s;\n" "$alias" "$name" "$attr" "$mod"
   done
 
   printf '}\n'
@@ -112,6 +175,8 @@ show_input_metadata() {
   info "  lastModified: ${last_modified}"
 }
 
+# Validate a follows spec: KEY=VALUE where KEY may contain '/' or '.' segments.
+# VALUE may be empty (means "follow current top-level flake").
 validate_follows_pair() {
   local pair="$1"
   [[ "$pair" == *=* ]] || die "Invalid --follows value '${pair}' (expected key=value)"
@@ -119,9 +184,30 @@ validate_follows_pair() {
   local key="${pair%%=*}"
   local value="${pair#*=}"
 
-  [[ -n "$key" && -n "$value" ]] || die "Invalid --follows value '${pair}' (expected key=value)"
-  [[ "$key" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]] || die "Invalid follows key '${key}'"
-  [[ "$value" =~ ^[a-zA-Z0-9._/-]+$ ]] || die "Invalid follows target '${value}'"
+  [[ -n "$key" ]] || die "Invalid --follows value '${pair}' (empty key)"
+
+  local normalized="${key//\//.}"
+  local seg
+  local IFS=.
+  # shellcheck disable=SC2206
+  local segs=($normalized)
+  for seg in "${segs[@]}"; do
+    [[ "$seg" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]] || die "Invalid follows key segment '${seg}' in '${key}'"
+  done
+  unset IFS
+
+  if [[ -n "$value" ]]; then
+    [[ "$value" =~ ^[a-zA-Z0-9._/-]+$ ]] || die "Invalid follows target '${value}'"
+  fi
+}
+
+# Normalize a follows key so the perl side sees dot-separated segments.
+normalize_follows_pair() {
+  local pair="$1"
+  local key="${pair%%=*}"
+  local value="${pair#*=}"
+  key="${key//\//.}"
+  printf '%s=%s' "$key" "$value"
 }
 
 patch_flake_add() {
@@ -129,11 +215,9 @@ patch_flake_add() {
   shift 2
 
   local follows_newline=""
-  local pair key value
+  local pair
   for pair in "$@"; do
-    key="${pair%%=*}"
-    value="${pair#*=}"
-    follows_newline+="${key}=${value}"$'\n'
+    follows_newline+="$(normalize_follows_pair "$pair")"$'\n'
   done
 
   local perl_script
@@ -210,7 +294,10 @@ patch_flake_add() {
     for my $raw (split /\n/, $follows_raw) {
       next if $raw eq q{};
       my ($k, $v) = split /=/, $raw, 2;
-      push @insert_lines, qq{$entry_indent$n.inputs.$k.follows = "$v";};
+      $v = "" unless defined $v;
+      my @segs = split /\./, $k;
+      my $chain = join('.inputs.', @segs);
+      push @insert_lines, qq{$entry_indent$n.inputs.$chain.follows = "$v";};
     }
 
     my $insert = "\n" . join("\n", @insert_lines) . "\n";
@@ -296,7 +383,7 @@ patch_flake_remove() {
     my $inner = substr($_, $inner_start, $inner_len);
 
     my $removed_url = ($inner =~ s/^\h*\Q$n\E\.url\h*=\h*".*?";\h*\n//mg);
-    $inner =~ s/^\h*\Q$n\E\.inputs\.[a-zA-Z][a-zA-Z0-9_-]*\.follows\h*=\h*".*?";\h*\n//mg;
+    $inner =~ s/^\h*\Q$n\E(?:\.inputs\.[a-zA-Z][a-zA-Z0-9_-]*)+\.follows\h*=\h*".*?";\h*\n//mg;
 
     die "inputMan: input '$n' not found in flake.nix inputs block\n" unless $removed_url;
 
@@ -315,6 +402,118 @@ PERL
   fi
 
   rm -f "$err_file"
+}
+
+# Read the set of pkg=alias pairs currently exposed by pkgs/inputs/<name>.nix.
+current_package_pairs() {
+  local name="$1"
+  local file="pkgs/inputs/${name}.nix"
+  [[ -f "$file" ]] || return 0
+  local pattern='^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*inputs\.'"$name"'\.packages\.\$\{system\}\.([A-Za-z0-9_-]+);'
+  while IFS= read -r line; do
+    if [[ "$line" =~ $pattern ]]; then
+      printf '%s=%s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}"
+    fi
+  done <"$file"
+}
+
+# Read module names currently exposed by modules/<home|nixos>/inputs/<name>.nix.
+current_module_names() {
+  local name="$1" kind="$2"
+  local attr
+  case "$kind" in
+    home) attr="homeModules" ;;
+    nixos) attr="nixosModules" ;;
+    *) return 1 ;;
+  esac
+  local file="modules/${kind}/inputs/${name}.nix"
+  [[ -f "$file" ]] || return 0
+  local pattern='^\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*inputs\.'"$name"'\.'"$attr"'\.([A-Za-z0-9_-]+);'
+  while IFS= read -r line; do
+    if [[ "$line" =~ $pattern ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+    fi
+  done <"$file"
+}
+
+# Prompt for a single package: emit `pkg=alias` on stdout, or nothing to skip.
+prompt_package_alias() {
+  local input_name="$1" pkg="$2"
+  local default_alias
+  if [[ "$pkg" == "default" ]]; then
+    default_alias="$input_name"
+  else
+    default_alias="${input_name}-${pkg}"
+  fi
+  local answer
+  read -rp "  package '${pkg}' — alias (blank=${default_alias}, '-' to skip): " answer </dev/tty
+  case "$answer" in
+    "") printf '%s=%s\n' "$pkg" "$default_alias" ;;
+    -) : ;;
+    *) printf '%s=%s\n' "$pkg" "$answer" ;;
+  esac
+}
+
+# Prompt for a single module: emit alias on stdout (as `mod=alias`) or skip.
+prompt_module_alias() {
+  local input_name="$1" mod="$2"
+  local default_alias
+  if [[ "$mod" == "default" ]]; then
+    default_alias="$input_name"
+  else
+    default_alias="${input_name}-${mod}"
+  fi
+  local answer
+  read -rp "  module '${mod}' — alias (blank=${default_alias}, '-' to skip): " answer </dev/tty
+  case "$answer" in
+    "") printf '%s=%s\n' "$mod" "$default_alias" ;;
+    -) : ;;
+    *) printf '%s=%s\n' "$mod" "$answer" ;;
+  esac
+}
+
+# Parse a --packages spec into pkg=alias pairs.
+# Accepts:
+#   pkg1=alias,pkg2=alias   (key=value list)
+#   pkg1,pkg2               (legacy include list; alias defaults to pkg / input-name)
+parse_packages_spec() {
+  local input_name="$1" spec="$2"
+  local IFS=','
+  # shellcheck disable=SC2206
+  local items=($spec)
+  unset IFS
+  local item pkg alias
+  for item in "${items[@]}"; do
+    [[ -z "$item" ]] && continue
+    if [[ "$item" == *=* ]]; then
+      pkg="${item%%=*}"
+      alias="${item#*=}"
+      [[ "$alias" == "-" ]] && continue
+    else
+      pkg="$item"
+      if [[ "$pkg" == "default" ]]; then
+        alias="$input_name"
+      else
+        alias="${input_name}-${pkg}"
+      fi
+    fi
+    printf '%s=%s\n' "$pkg" "$alias"
+  done
+}
+
+# Default selection: expose every discovered package with the default alias.
+default_package_selection() {
+  local input_name="$1"
+  shift
+  local pkg alias
+  for pkg in "$@"; do
+    if [[ "$pkg" == "default" ]]; then
+      alias="$input_name"
+    else
+      alias="${input_name}-${pkg}"
+    fi
+    printf '%s=%s\n' "$pkg" "$alias"
+  done
 }
 
 write_news_entry() {
@@ -387,13 +586,6 @@ write_news_entry() {
 finalize_commit() {
   local commit_message="$1" auto_commit="$2" no_commit="$3"
 
-  # # pre-commit check
-  # info "Running pre-commit checks..."
-  # set +e
-  # pre-commit run --all-files
-  # set -e
-  # info "Pre-commit checks finished."
-
   if git diff --cached --quiet; then
     warn "No staged changes to commit."
     return
@@ -454,6 +646,8 @@ INPUTMAN_CLEANUP_ACTIVE=0
 INPUTMAN_CLEANUP_FILE=""
 INPUTMAN_CLEANUP_FLAKE=0
 INPUTMAN_CLEANUP_NEWS_FILE=""
+INPUTMAN_CLEANUP_HOME_MOD=""
+INPUTMAN_CLEANUP_NIXOS_MOD=""
 
 inputman_install_cleanup() {
   local status="$1"
@@ -468,6 +662,16 @@ inputman_install_cleanup() {
     rolled_back=1
   fi
 
+  if [[ -n "${INPUTMAN_CLEANUP_HOME_MOD:-}" && -f "${INPUTMAN_CLEANUP_HOME_MOD}" ]]; then
+    rm -f "${INPUTMAN_CLEANUP_HOME_MOD}"
+    rolled_back=1
+  fi
+
+  if [[ -n "${INPUTMAN_CLEANUP_NIXOS_MOD:-}" && -f "${INPUTMAN_CLEANUP_NIXOS_MOD}" ]]; then
+    rm -f "${INPUTMAN_CLEANUP_NIXOS_MOD}"
+    rolled_back=1
+  fi
+
   if [[ -n "${INPUTMAN_CLEANUP_NEWS_FILE:-}" && -f "${INPUTMAN_CLEANUP_NEWS_FILE}" ]]; then
     rm -f "${INPUTMAN_CLEANUP_NEWS_FILE}"
     rolled_back=1
@@ -479,13 +683,74 @@ inputman_install_cleanup() {
   fi
 
   if [[ "$rolled_back" -eq 1 ]]; then
-    warn "Install failed. Rolled back flake.nix, generated input file, and news entry."
+    warn "Install failed. Rolled back flake.nix and generated files."
   fi
 }
 
+# Write a module aggregator file if the input exposes modules of the given kind.
+# Returns the generated file path on stdout, or empty if none written.
+maybe_generate_module_aggregator() {
+  local name="$1" url="$2" kind="$3" auto_yes="$4"
+  local attr subdir
+  case "$kind" in
+    home) attr="homeModules"; subdir="modules/home/inputs" ;;
+    nixos) attr="nixosModules"; subdir="modules/nixos/inputs" ;;
+    *) return 1 ;;
+  esac
+
+  local -a mods=()
+  while IFS= read -r mod; do
+    [[ -n "$mod" ]] && mods+=("$mod")
+  done < <(discover_modules "$url" "$attr")
+
+  [[ ${#mods[@]} -eq 0 ]] && return 0
+
+  info "Discovered ${#mods[@]} ${kind} module(s) in '${name}': ${mods[*]}" >&2
+
+  # Selection: default aliases; when interactive (no --yes), prompt per module.
+  local -a selection=()
+  local mod pair
+  if [[ -n "$auto_yes" ]]; then
+    for mod in "${mods[@]}"; do
+      if [[ "$mod" == "default" ]]; then
+        selection+=("${mod}=${name}")
+      else
+        selection+=("${mod}=${name}-${mod}")
+      fi
+    done
+  else
+    for mod in "${mods[@]}"; do
+      pair=$(prompt_module_alias "$name" "$mod" || true)
+      [[ -n "$pair" ]] && selection+=("$pair")
+    done
+  fi
+
+  [[ ${#selection[@]} -eq 0 ]] && return 0
+
+  mkdir -p "$subdir"
+  local file="${subdir}/${name}.nix"
+  # Convert selection (mod=alias) into args to generate_module_file: input name, attr, module names…
+  # Then emit alias directly.
+  {
+    printf '# gigpkgs inputMan: managed %s aggregator\n' "$attr"
+    printf '{ inputs }:\n'
+    printf '{\n'
+    local sel mod2 alias2
+    for sel in "${selection[@]}"; do
+      mod2="${sel%%=*}"
+      alias2="${sel#*=}"
+      printf "  %s = inputs.%s.%s.%s;\n" "$alias2" "$name" "$attr" "$mod2"
+    done
+    printf '}\n'
+  } >"$file"
+
+  ok "Wrote ${file}" >&2
+  printf '%s' "$file"
+}
+
 cmd_install() {
-  local url="" name="" packages_override="" auto_commit="" no_commit=""
-  local no_info="" no_branch=""
+  local url="" name="" packages_arg="" packages_flag="" auto_commit="" no_commit=""
+  local no_info="" no_branch="" no_modules=""
   local -a follows_pairs=()
 
   while [[ $# -gt 0 ]]; do
@@ -494,14 +759,24 @@ cmd_install() {
       name="$2"
       shift 2
       ;;
-    --packages)
-      packages_override="$2"
-      shift 2
+    --packages | -p)
+      if [[ $# -ge 2 && "$2" != -* ]]; then
+        packages_arg="$2"
+        shift 2
+      else
+        packages_flag="prompt"
+        shift
+      fi
       ;;
-    --follows)
-      validate_follows_pair "$2"
-      follows_pairs+=("$2")
-      shift 2
+    --follows | -f)
+      if [[ $# -ge 2 && "$2" != -* && "$2" == *=* ]]; then
+        validate_follows_pair "$2"
+        follows_pairs+=("$2")
+        shift 2
+      else
+        follows_pairs+=("$(self_name)=")
+        shift
+      fi
       ;;
     --no-info)
       no_info=1
@@ -509,6 +784,10 @@ cmd_install() {
       ;;
     --no-branch)
       no_branch=1
+      shift
+      ;;
+    --no-modules)
+      no_modules=1
       shift
       ;;
     --yes | -y)
@@ -559,44 +838,81 @@ cmd_install() {
   INPUTMAN_CLEANUP_ACTIVE=1
   INPUTMAN_CLEANUP_FILE="$input_file"
   INPUTMAN_CLEANUP_FLAKE=0
+  INPUTMAN_CLEANUP_HOME_MOD=""
+  INPUTMAN_CLEANUP_NIXOS_MOD=""
   trap 'inputman_install_cleanup "$?"' RETURN
 
   local system
   system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
 
-  local -a pkg_list=()
-  if [[ -n "$packages_override" ]]; then
-    IFS=',' read -ra pkg_list <<<"$packages_override"
+  local -a discovered=()
+  info "Discovering packages from ${url} ..."
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && discovered+=("$line")
+  done < <(discover_packages "$url" "$system")
+  [[ ${#discovered[@]} -eq 0 ]] && discovered=("default")
+  ok "Discovered packages: ${discovered[*]}"
+
+  local -a selection=()
+  if [[ "$packages_flag" == "prompt" ]]; then
+    info "Prompting per package (blank=default alias, '-' to skip):"
+    local pkg pair
+    for pkg in "${discovered[@]}"; do
+      pair=$(prompt_package_alias "$name" "$pkg" || true)
+      [[ -n "$pair" ]] && selection+=("$pair")
+    done
+  elif [[ -n "$packages_arg" ]]; then
+    while IFS= read -r pair; do
+      [[ -n "$pair" ]] && selection+=("$pair")
+    done < <(parse_packages_spec "$name" "$packages_arg")
   else
-    info "Discovering packages from ${url} ..."
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && pkg_list+=("$line")
-    done < <(discover_packages "$url" "$system")
-    [[ ${#pkg_list[@]} -eq 0 ]] && pkg_list=("default")
-    ok "Using packages: ${pkg_list[*]}"
+    while IFS= read -r pair; do
+      [[ -n "$pair" ]] && selection+=("$pair")
+    done < <(default_package_selection "$name" "${discovered[@]}")
   fi
+
+  [[ ${#selection[@]} -eq 0 ]] && die "No packages selected for '${name}'."
 
   info "Generating ${input_file} ..."
   local content
-  content=$(generate_input_file "$name" "${pkg_list[@]}")
+  content=$(generate_input_file "$name" "${selection[@]}")
   printf '%s' "$content" >>"$input_file"
   ok "Wrote ${input_file}"
 
   info "Adding input to flake.nix ..."
   INPUTMAN_CLEANUP_FLAKE=1
-  patch_flake_add "$name" "$url" "${follows_pairs[@]}"
+  if [[ ${#follows_pairs[@]} -eq 0 ]]; then
+    patch_flake_add "$name" "$url"
+  else
+    patch_flake_add "$name" "$url" "${follows_pairs[@]}"
+  fi
   ok "Patched flake.nix"
 
   info "Locking input ${name} ..."
   nix flake lock
   ok "flake.lock updated"
 
-  local news_details="Source: ${url}"$'\n'"Packages: ${pkg_list[*]}"
+  local home_mod_file="" nixos_mod_file=""
+  if [[ -z "$no_modules" ]]; then
+    info "Scanning ${name} for home-manager / NixOS modules ..."
+    home_mod_file=$(maybe_generate_module_aggregator "$name" "$url" home "$auto_commit" || true)
+    INPUTMAN_CLEANUP_HOME_MOD="$home_mod_file"
+    nixos_mod_file=$(maybe_generate_module_aggregator "$name" "$url" nixos "$auto_commit" || true)
+    INPUTMAN_CLEANUP_NIXOS_MOD="$nixos_mod_file"
+  fi
+
+  local pkg_summary
+  pkg_summary=$(printf '%s ' "${selection[@]}")
+  local news_details="Source: ${url}"$'\n'"Packages: ${pkg_summary%% }"
+  [[ -n "$home_mod_file" ]] && news_details+=$'\n'"Home modules aggregator: ${home_mod_file}"
+  [[ -n "$nixos_mod_file" ]] && news_details+=$'\n'"NixOS modules aggregator: ${nixos_mod_file}"
   local news_file
   news_file=$(write_news_entry install "$name" "$news_details") || news_file=""
   INPUTMAN_CLEANUP_NEWS_FILE="$news_file"
 
   git add "$input_file" flake.nix flake.lock
+  [[ -n "$home_mod_file" ]] && git add "$home_mod_file"
+  [[ -n "$nixos_mod_file" ]] && git add "$nixos_mod_file"
   [[ -n "$news_file" ]] && git add "$news_file"
 
   finalize_commit "inputMan: add input ${name} (${url})" "$auto_commit" "$no_commit"
@@ -604,12 +920,108 @@ cmd_install() {
   INPUTMAN_CLEANUP_ACTIVE=0
   INPUTMAN_CLEANUP_FILE=""
   INPUTMAN_CLEANUP_FLAKE=0
+  INPUTMAN_CLEANUP_HOME_MOD=""
+  INPUTMAN_CLEANUP_NIXOS_MOD=""
   INPUTMAN_CLEANUP_NEWS_FILE=""
   trap - RETURN
 }
 
+# Read a locked URL for input <name> from flake.lock so update rescans use the
+# same source of truth as the flake.
+locked_input_url() {
+  local name="$1"
+  [[ -f flake.lock ]] || return 1
+  nix eval --json --impure --expr "
+    let lock = builtins.fromJSON (builtins.readFile ./flake.lock);
+        node = lock.nodes.\"${name}\" or null;
+    in
+      if node == null then null
+      else if node ? original then
+        let o = node.original; in
+        if o.type == \"github\" then
+          \"github:\${o.owner}/\${o.repo}\" + (if o ? ref then \"/\${o.ref}\" else \"\")
+        else if o.type == \"git\" then o.url
+        else if o ? url then o.url
+        else null
+      else null
+  " 2>/dev/null | jq -r 'select(. != null)' 2>/dev/null || return 1
+}
+
+# Append lines describing new packages/modules to an existing aggregator file.
+# Insert before the closing '}'.
+append_lines_before_close() {
+  local file="$1"
+  shift
+  # remaining args: lines to insert
+  local tmp
+  tmp=$(mktemp)
+  local inserted=0
+  while IFS= read -r line; do
+    if [[ "$inserted" -eq 0 && "$line" =~ ^\}[[:space:]]*$ ]]; then
+      local extra
+      for extra in "$@"; do
+        printf '%s\n' "$extra"
+      done >>"$tmp"
+      inserted=1
+    fi
+    printf '%s\n' "$line" >>"$tmp"
+  done <"$file"
+  mv "$tmp" "$file"
+}
+
+# Append pkg=alias entries to pkgs/inputs/<name>.nix.
+append_package_entries() {
+  local name="$1"
+  shift
+  local file="pkgs/inputs/${name}.nix"
+  [[ -f "$file" ]] || die "Input file '${file}' missing; cannot append entries"
+
+  local -a lines=()
+  local pair pkg alias
+  for pair in "$@"; do
+    pkg="${pair%%=*}"
+    alias="${pair#*=}"
+    lines+=("  ${alias} = inputs.${name}.packages.\${system}.${pkg};")
+  done
+  append_lines_before_close "$file" "${lines[@]}"
+}
+
+# Append module entries to modules/<kind>/inputs/<name>.nix; create if missing.
+append_module_entries() {
+  local name="$1" kind="$2"
+  shift 2
+  local attr subdir
+  case "$kind" in
+    home) attr="homeModules"; subdir="modules/home/inputs" ;;
+    nixos) attr="nixosModules"; subdir="modules/nixos/inputs" ;;
+    *) return 1 ;;
+  esac
+
+  mkdir -p "$subdir"
+  local file="${subdir}/${name}.nix"
+  if [[ ! -f "$file" ]]; then
+    {
+      printf '# gigpkgs inputMan: managed %s aggregator\n' "$attr"
+      printf '{ inputs }:\n'
+      printf '{\n'
+      printf '}\n'
+    } >"$file"
+  fi
+
+  local -a lines=()
+  local pair mod alias
+  for pair in "$@"; do
+    mod="${pair%%=*}"
+    alias="${pair#*=}"
+    lines+=("  ${alias} = inputs.${name}.${attr}.${mod};")
+  done
+  append_lines_before_close "$file" "${lines[@]}"
+
+  printf '%s' "$file"
+}
+
 cmd_update() {
-  local name="" auto_commit="" no_commit=""
+  local name="" auto_commit="" no_commit="" no_modules=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -619,6 +1031,10 @@ cmd_update() {
       ;;
     --no-commit | -n)
       no_commit=1
+      shift
+      ;;
+    --no-modules)
+      no_modules=1
       shift
       ;;
     -*) die "Unknown option: $1" ;;
@@ -639,10 +1055,128 @@ cmd_update() {
   nix flake lock --update-input "$name"
   ok "flake.lock updated for '${name}'"
 
-  local news_file
-  news_file=$(write_news_entry update "$name" "") || news_file=""
+  local system
+  system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
 
-  git add flake.lock
+  local url=""
+  url=$(locked_input_url "$name" 2>/dev/null || true)
+  if [[ -z "$url" ]]; then
+    warn "Could not determine locked URL for '${name}'; skipping rescan."
+  fi
+
+  local -a added_pkgs=() added_home=() added_nixos=()
+
+  if [[ -n "$url" ]]; then
+    # Package rescan
+    local -a discovered=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && discovered+=("$line")
+    done < <(discover_packages "$url" "$system")
+
+    local -A current_pkg_map=()
+    while IFS= read -r pair; do
+      [[ -n "$pair" ]] && current_pkg_map["${pair%%=*}"]=1
+    done < <(current_package_pairs "$name")
+
+    local pkg pair
+    for pkg in "${discovered[@]}"; do
+      if [[ -z "${current_pkg_map[$pkg]:-}" ]]; then
+        if [[ -n "$auto_commit" ]]; then
+          if [[ "$pkg" == "default" ]]; then
+            added_pkgs+=("${pkg}=${name}")
+          else
+            added_pkgs+=("${pkg}=${name}-${pkg}")
+          fi
+        else
+          info "New package '${pkg}' found in '${name}'"
+          pair=$(prompt_package_alias "$name" "$pkg" || true)
+          [[ -n "$pair" ]] && added_pkgs+=("$pair")
+        fi
+      fi
+    done
+
+    if [[ -z "$no_modules" ]]; then
+      # Module rescan (home)
+      local -a discovered_home=()
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && discovered_home+=("$line")
+      done < <(discover_modules "$url" "homeModules")
+
+      local -A current_home_map=()
+      while IFS= read -r mod; do
+        [[ -n "$mod" ]] && current_home_map["$mod"]=1
+      done < <(current_module_names "$name" home)
+
+      local mod
+      for mod in "${discovered_home[@]}"; do
+        if [[ -z "${current_home_map[$mod]:-}" ]]; then
+          if [[ -n "$auto_commit" ]]; then
+            if [[ "$mod" == "default" ]]; then
+              added_home+=("${mod}=${name}")
+            else
+              added_home+=("${mod}=${name}-${mod}")
+            fi
+          else
+            info "New home module '${mod}' found in '${name}'"
+            pair=$(prompt_module_alias "$name" "$mod" || true)
+            [[ -n "$pair" ]] && added_home+=("$pair")
+          fi
+        fi
+      done
+
+      # Module rescan (nixos)
+      local -a discovered_nixos=()
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && discovered_nixos+=("$line")
+      done < <(discover_modules "$url" "nixosModules")
+
+      local -A current_nixos_map=()
+      while IFS= read -r mod; do
+        [[ -n "$mod" ]] && current_nixos_map["$mod"]=1
+      done < <(current_module_names "$name" nixos)
+
+      for mod in "${discovered_nixos[@]}"; do
+        if [[ -z "${current_nixos_map[$mod]:-}" ]]; then
+          if [[ -n "$auto_commit" ]]; then
+            if [[ "$mod" == "default" ]]; then
+              added_nixos+=("${mod}=${name}")
+            else
+              added_nixos+=("${mod}=${name}-${mod}")
+            fi
+          else
+            info "New nixos module '${mod}' found in '${name}'"
+            pair=$(prompt_module_alias "$name" "$mod" || true)
+            [[ -n "$pair" ]] && added_nixos+=("$pair")
+          fi
+        fi
+      done
+    fi
+  fi
+
+  local home_mod_file="" nixos_mod_file=""
+  if [[ ${#added_pkgs[@]} -gt 0 ]]; then
+    append_package_entries "$name" "${added_pkgs[@]}"
+    ok "Added ${#added_pkgs[@]} new package entry(ies) to pkgs/inputs/${name}.nix"
+  fi
+  if [[ ${#added_home[@]} -gt 0 ]]; then
+    home_mod_file=$(append_module_entries "$name" home "${added_home[@]}")
+    ok "Added ${#added_home[@]} new home module entry(ies) to ${home_mod_file}"
+  fi
+  if [[ ${#added_nixos[@]} -gt 0 ]]; then
+    nixos_mod_file=$(append_module_entries "$name" nixos "${added_nixos[@]}")
+    ok "Added ${#added_nixos[@]} new nixos module entry(ies) to ${nixos_mod_file}"
+  fi
+
+  local news_details=""
+  [[ ${#added_pkgs[@]} -gt 0 ]] && news_details+="New packages: ${added_pkgs[*]}"$'\n'
+  [[ ${#added_home[@]} -gt 0 ]] && news_details+="New home modules: ${added_home[*]}"$'\n'
+  [[ ${#added_nixos[@]} -gt 0 ]] && news_details+="New nixos modules: ${added_nixos[*]}"$'\n'
+  local news_file
+  news_file=$(write_news_entry update "$name" "$news_details") || news_file=""
+
+  git add flake.lock "pkgs/inputs/${name}.nix" 2>/dev/null || true
+  [[ -n "$home_mod_file" ]] && git add "$home_mod_file"
+  [[ -n "$nixos_mod_file" ]] && git add "$nixos_mod_file"
   [[ -n "$news_file" ]] && git add "$news_file"
   finalize_commit "inputMan: update input ${name}" "$auto_commit" "$no_commit"
 }
@@ -677,8 +1211,13 @@ cmd_remove() {
   local input_file="pkgs/inputs/${name}.nix"
   [[ -f "$input_file" ]] || die "Input file '${input_file}' not found"
 
+  local home_mod_file="modules/home/inputs/${name}.nix"
+  local nixos_mod_file="modules/nixos/inputs/${name}.nix"
+
   info "Removing input '${name}' ..."
   rm -f "$input_file"
+  [[ -f "$home_mod_file" ]] && rm -f "$home_mod_file"
+  [[ -f "$nixos_mod_file" ]] && rm -f "$nixos_mod_file"
   patch_flake_remove "$name"
   nix flake lock
   ok "Removed input '${name}' and updated flake.lock"
@@ -687,6 +1226,9 @@ cmd_remove() {
   news_file=$(write_news_entry remove "$name" "") || news_file=""
 
   git add "$input_file" flake.nix flake.lock
+  [[ -f "$home_mod_file" ]] || git add "$home_mod_file" 2>/dev/null || true
+  [[ -f "$nixos_mod_file" ]] || git add "$nixos_mod_file" 2>/dev/null || true
+  git rm --ignore-unmatch "$home_mod_file" "$nixos_mod_file" >/dev/null 2>&1 || true
   [[ -n "$news_file" ]] && git add "$news_file"
   finalize_commit "inputMan: remove input ${name}" "$auto_commit" "$no_commit"
 }
@@ -728,10 +1270,20 @@ __infer-name)
   infer_name "$1"
   echo
   ;;
+__self-name)
+  shift
+  self_name
+  echo
+  ;;
 __discover-packages)
   shift
   [[ $# -eq 2 ]] || die "Usage: inputman __discover-packages <url> <system>"
   discover_packages "$1" "$2"
+  ;;
+__discover-modules)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __discover-modules <url> <attr>"
+  discover_modules "$1" "$2"
   ;;
 __patch-flake-add)
   shift
@@ -742,6 +1294,11 @@ __patch-flake-remove)
   shift
   [[ $# -eq 1 ]] || die "Usage: inputman __patch-flake-remove <name>"
   patch_flake_remove "$1"
+  ;;
+__parse-packages-spec)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __parse-packages-spec <input-name> <spec>"
+  parse_packages_spec "$1" "$2"
   ;;
 help | -h | --help) usage ;;
 *) die "Unknown command: ${1}. Run 'inputman help' for usage." ;;

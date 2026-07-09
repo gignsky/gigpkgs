@@ -87,11 +87,13 @@
       # Expose news for consumers
       inherit news;
 
-      # NixOS modules — auto-discovered from modules/nixos/
-      nixosModules = import ./modules/nixos { inherit lib; };
+      # NixOS modules — auto-discovered from modules/nixos/ (+ inputMan-managed
+      # aggregators under modules/nixos/inputs/).
+      nixosModules = import ./modules/nixos { inherit lib inputs; };
 
-      # Home Manager modules — auto-discovered from modules/home/
-      homeModules = import ./modules/home { inherit lib; };
+      # Home Manager modules — auto-discovered from modules/home/ (+ inputMan-managed
+      # aggregators under modules/home/inputs/).
+      homeModules = import ./modules/home { inherit lib inputs; };
 
       # Pre-commit hooks for this repo
       pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
@@ -139,7 +141,10 @@
           ;
       };
 
-      # Dev shell for working on gigpkgs
+      # Dev shell for working on gigpkgs. Single-output packages from every
+      # installed input (files under ./pkgs/inputs/ exposing
+      # `packages.<system>.default`) are auto-included via
+      # devShellPackages.nix; multi-variant inputs must be added by name below.
       devShells.${system}.default = pkgs.mkShell {
         NIX_CONFIG = "extra-experimental-features = nix-command flakes";
 
@@ -163,10 +168,12 @@
               ripgrep
               inputman
               upignore
-              roll-flow
               ;
           }
-          ++ [ self.packages.${system}.gignews ];
+          ++ [ self.packages.${system}.gignews ]
+          ++ (import ./pkgs/inputs/devShellPackages.nix {
+            inherit inputs system lib;
+          });
         shellHook = ''
           ${self.pre-commit-check.shellHook}
 
