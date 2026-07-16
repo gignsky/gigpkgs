@@ -42,7 +42,7 @@ let
   # Sort entries newest-first by `timestamp` (a precise UTC commit time), falling
   # back to `date` for any entry without one. Ties (e.g. entries added in the same
   # commit share a timestamp) are broken by `num` so ordering is deterministic.
-  entrySortKey = entry: if entry ? timestamp then entry.timestamp else entry.date;
+  entrySortKey = entry: entry.timestamp or entry.date;
   sortedEntries = lib.sort (
     a: b:
     let
@@ -57,10 +57,7 @@ let
   # build if any entry is missing one.
   entryNums = map (
     entry:
-    if entry ? num then
-      entry.num
-    else
-      throw "gignews: news entry '${entry.id}' is missing the required 'num' field"
+    entry.num or (throw "gignews: news entry '${entry.id}' is missing the required 'num' field")
   ) sortedEntries;
 
   # Validate that the `num` values are unique. Gate the entry list on this check
