@@ -2,7 +2,7 @@
 
 `inputman` manages external flake inputs for gigpkgs-style repositories: it
 adds inputs, wires follows, exposes packages, and auto-discovers
-`homeModules` / `nixosModules` exposed by the input flake.
+`homeManagerModules` / `nixosModules` exposed by the input flake.
 
 ## Commands
 

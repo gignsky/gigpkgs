@@ -18,7 +18,7 @@ Import the home-manager module in your home configuration:
 ```nix
 # In your home.nix or similar
 {
-  imports = [ inputs.gigpkgs.homeModules.gignews ];
+  imports = [ inputs.gigpkgs.homeManagerModules.gignews ];
 
   # Optional: disable if you don't want news on activation
   # gigpkgs.news.enable = false;
@@ -121,5 +121,5 @@ nix build .#gignews
 nix eval .#news.entries --json
 
 # View the homeModule
-nix eval .#homeModules.gignews
+nix eval .#homeManagerModules.gignews
 ```

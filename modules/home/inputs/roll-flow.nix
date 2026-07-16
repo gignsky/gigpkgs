@@ -1,5 +1,5 @@
-# gigpkgs inputMan: managed homeModules aggregator
+# gigpkgs inputMan: managed homeManagerModules aggregator
 { inputs }:
 {
-  roll-flow = inputs.roll-flow.homeModules.roll-flow;
+  roll-flow = inputs.roll-flow.homeManagerModules.roll-flow;
 }

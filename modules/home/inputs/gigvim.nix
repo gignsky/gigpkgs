@@ -1,4 +1,4 @@
-# gigpkgs inputMan: managed homeModules aggregator
+# gigpkgs inputMan: managed homeManagerModules aggregator
 { inputs }:
 {
   default = inputs.gigvim.homeManagerModules.default;
