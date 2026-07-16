@@ -96,7 +96,7 @@ discover_packages() {
 }
 
 # Discover module names from an input flake for a given output attribute
-# (homeModules or nixosModules). Outputs one name per line, or nothing.
+# (homeManagerModules or nixosModules). Outputs one name per line, or nothing.
 discover_modules() {
   local url="$1" attr="$2"
   local names_json
@@ -104,9 +104,10 @@ discover_modules() {
     echo "$names_json" | jq -r '.[]' 2>/dev/null || true
     return
   fi
-  # Legacy attribute name for older home-manager flakes.
-  if [[ "$attr" == "homeModules" ]]; then
-    if names_json=$(nix eval --json "${url}#homeManagerModules" --apply 'set: builtins.attrNames set' 2>/dev/null); then
+  # Legacy attribute name for older home-manager flakes (pre-standardization
+  # gigpkgs and some inputs exposed `homeModules`).
+  if [[ "$attr" == "homeManagerModules" ]]; then
+    if names_json=$(nix eval --json "${url}#homeModules" --apply 'set: builtins.attrNames set' 2>/dev/null); then
       echo "$names_json" | jq -r '.[]' 2>/dev/null || true
       return
     fi
@@ -133,7 +134,7 @@ generate_input_file() {
 }
 
 generate_module_file() {
-  # Args: input_name, attr (homeModules/nixosModules), then module names.
+  # Args: input_name, attr (homeManagerModules/nixosModules), then module names.
   local name="$1" attr="$2"
   shift 2
 
@@ -422,7 +423,7 @@ current_module_pairs() {
   local name="$1" kind="$2"
   local attr
   case "$kind" in
-  home) attr="homeModules" ;;
+  home) attr="homeManagerModules" ;;
   nixos) attr="nixosModules" ;;
   *) return 1 ;;
   esac
@@ -715,7 +716,7 @@ maybe_generate_module_aggregator() {
   local attr subdir
   case "$kind" in
   home)
-    attr="homeModules"
+    attr="homeManagerModules"
     subdir="modules/home/inputs"
     ;;
   nixos)
@@ -1021,7 +1022,7 @@ append_module_entries() {
   local attr subdir
   case "$kind" in
   home)
-    attr="homeModules"
+    attr="homeManagerModules"
     subdir="modules/home/inputs"
     ;;
   nixos)
@@ -1139,11 +1140,11 @@ cmd_update() {
       local -A current_home_map=()
       while IFS= read -r line; do
         [[ -n "$line" ]] && discovered_home+=("$line")
-      done < <(discover_modules "$url" "homeModules")
+      done < <(discover_modules "$url" "homeManagerModules")
       while IFS= read -r pair; do
         [[ -z "$pair" ]] && continue
         current_home_map["${pair%%=*}"]=1
-        existing_home_display+=("${pair#*=}  <-  homeModules.${pair%%=*}")
+        existing_home_display+=("${pair#*=}  <-  homeManagerModules.${pair%%=*}")
       done < <(current_module_pairs "$name" home)
       for mod in "${discovered_home[@]}"; do
         [[ -z "${current_home_map[$mod]:-}" ]] && new_home_list+=("$mod")
@@ -1158,7 +1159,7 @@ cmd_update() {
               added_home+=("${mod}=${name}-${mod}")
             fi
           else
-            pair=$(prompt_module_alias "$name" "$mod" "homeModules" || true)
+            pair=$(prompt_module_alias "$name" "$mod" "homeManagerModules" || true)
             [[ -n "$pair" ]] && added_home+=("$pair")
           fi
         done

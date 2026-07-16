@@ -171,7 +171,7 @@ gigpkgs-news show <id>  # display a specific entry regardless of read state
 
 ### HM Activation Module
 
-`modules/home/gigpkgs-news.nix` — imported by gigpkgs's HM homeModules:
+`modules/home/gigpkgs-news.nix` — imported by gigpkgs's HM homeManagerModules:
 
 ```nix
 { config, pkgs, lib, newsJson, ... }:
@@ -193,7 +193,7 @@ The `newsJson` store path is injected via `_module.args` from the `news/default.
 In a home config, import the module:
 
 ```nix
-imports = [ inputs.gigpkgs.homeModules.gigpkgs-news ];
+imports = [ inputs.gigpkgs.homeManagerModules.gigpkgs-news ];
 ```
 
 Or disable it:
@@ -219,7 +219,7 @@ No other configuration required — the news list is baked into the package at b
 **Phase 3 — HM activation module**
 - `modules/home/gigpkgs-news.nix`
 - Wire `newsJson` through `_module.args`
-- Export as `homeModules.gigpkgs-news` in `flake.nix`
+- Export as `homeManagerModules.gigpkgs-news` in `flake.nix`
 
 **Phase 4 — `add-input` integration**
 - When `add-input` onboards a new input that exposes packages, auto-generate a news entry announcing the new `pkgs.X` aliases

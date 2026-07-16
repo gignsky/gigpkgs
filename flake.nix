@@ -93,7 +93,7 @@
 
       # Home Manager modules — auto-discovered from modules/home/ (+ inputMan-managed
       # aggregators under modules/home/inputs/).
-      homeModules = import ./modules/home { inherit lib inputs; };
+      homeManagerModules = import ./modules/home { inherit lib inputs; };
 
       # Pre-commit hooks for this repo
       pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
