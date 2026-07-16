@@ -2,6 +2,7 @@
   id = "2026-07-09-inputman-install-gigvim";
   num = 8;
   date = "2026-07-09";
+  timestamp = "2026-07-09T18:03:28Z";
   message = ''
     Added flake input 'gigvim'
 

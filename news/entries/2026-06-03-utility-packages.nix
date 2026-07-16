@@ -2,6 +2,7 @@
   id = "2026-06-03-utility-packages";
   num = 4;
   date = "2026-06-03";
+  timestamp = "2026-06-03T09:08:51Z";
   message = ''
     Utility packages now available
 
