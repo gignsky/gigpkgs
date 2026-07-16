@@ -37,8 +37,12 @@ jobs:
 
   derive:
     needs: check
-    # Only project onto channel branches on a real trunk push — never on PRs.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Project onto channel branches on a real trunk push, or a manual dispatch
+    # (so the derive can be tested on demand). NEVER on PRs — we don't derive
+    # channel branches from unmerged code.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
