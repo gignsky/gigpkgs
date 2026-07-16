@@ -39,18 +39,25 @@ let
       true
   ) allEntries;
 
-  # Sort entries by date (newest first)
-  sortedEntries = lib.sort (a: b: a.date > b.date) applicableEntries;
+  # Sort entries newest-first by `timestamp` (a precise UTC commit time), falling
+  # back to `date` for any entry without one. Ties (e.g. entries added in the same
+  # commit share a timestamp) are broken by `num` so ordering is deterministic.
+  entrySortKey = entry: entry.timestamp or entry.date;
+  sortedEntries = lib.sort (
+    a: b:
+    let
+      ka = entrySortKey a;
+      kb = entrySortKey b;
+    in
+    if ka == kb then a.num > b.num else ka > kb
+  ) applicableEntries;
 
   # Every entry must carry a `num` — a short, stable integer id used to mark
   # entries read without typing the full string id. Collect them, failing the
   # build if any entry is missing one.
   entryNums = map (
     entry:
-    if entry ? num then
-      entry.num
-    else
-      throw "gignews: news entry '${entry.id}' is missing the required 'num' field"
+    entry.num or (throw "gignews: news entry '${entry.id}' is missing the required 'num' field")
   ) sortedEntries;
 
   # Validate that the `num` values are unique. Gate the entry list on this check

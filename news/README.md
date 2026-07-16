@@ -48,7 +48,21 @@ gignews read-all
 
 # Show a specific entry (by number or id)
 gignews show 3
+
+# Author a new entry from a template and open it in $EDITOR
+gignews post my-slug
+gignews post my-slug -m "Body text"   # fill body non-interactively; skips the editor
+gignews post my-slug --no-edit        # create from template but don't open the editor
 ```
+
+### Authoring with `gignews post`
+
+`gignews post [slug]` scaffolds `news/entries/<YYYY-MM-DD>-<slug>.nix` from a template,
+pre-filling `id`, the next `num`, today's `date`, and a UTC `timestamp`, then opens it in
+`$EDITOR`. It's a **repo-scoped** command — the installed CLI is a read-only Nix wrapper, so
+`post` locates the entries directory via (in order) `--entries-dir`, `$GIGNEWS_ENTRIES_DIR`,
+or by walking up from the current directory. Pass `-m/--message` (used by tools such as
+inputMan) to fill the body non-interactively.
 
 ### Read State
 
@@ -63,6 +77,7 @@ Create a new file in `news/entries/` with the format: `YYYY-MM-DD-slug.nix`
   id = "2026-06-03-my-news";
   num = 10; # next unused number (see below)
   date = "2026-06-03";
+  timestamp = "2026-06-03T14:30:00Z"; # UTC; orders same-day entries (see below)
 
   # Optional: only show if condition is true
   # condition = { pkgs, ... }: pkgs ? myNewPackage;
@@ -83,7 +98,11 @@ Create a new file in `news/entries/` with the format: `YYYY-MM-DD-slug.nix`
   reused — give a new entry the next unused number. Used so entries can be marked
   read by number (`gignews read <num>`) instead of the full id. The build fails if
   any entry is missing `num` or if two entries share the same `num`.
-- **date** (required): ISO date string (YYYY-MM-DD) for sorting
+- **date** (required): ISO date string (YYYY-MM-DD); day label and fallback sort key
+- **timestamp** (recommended): UTC ISO-8601 (`YYYY-MM-DDThh:mm:ssZ`), ideally the entry's
+  commit time. Entries sort newest-first by `timestamp` (falling back to `date`, tie-broken
+  by `num`), so multiple entries on the same day appear in the right order. Shown in the
+  viewer's local time. `gignews post` sets this automatically.
 - **message** (required): Freeform text displayed to users
 - **condition** (optional): Lambda that receives `{ pkgs, config, lib }` and returns bool
 

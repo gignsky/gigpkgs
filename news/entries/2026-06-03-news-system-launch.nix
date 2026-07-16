@@ -2,6 +2,7 @@
   id = "2026-06-03-news-system-launch";
   num = 2;
   date = "2026-06-03";
+  timestamp = "2026-06-03T09:08:51Z";
   message = ''
     Welcome to gigpkgs-news!
 

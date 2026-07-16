@@ -2,6 +2,7 @@
   id = "2026-06-03-locker-available";
   num = 1;
   date = "2026-06-03";
+  timestamp = "2026-06-03T09:08:51Z";
   message = ''
     locker — Interactive flake lock updater
 

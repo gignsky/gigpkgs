@@ -2,6 +2,7 @@
   id = "2026-07-16-sequential-ids";
   num = 16;
   date = "2026-07-16";
+  timestamp = "2026-07-16T18:02:39Z";
   message = ''
     Mark news read by number (gignews 0.1.1)
 
