@@ -1,5 +1,6 @@
 {
   id = "2026-07-05-inputman-install-roll-flow";
+  num = 6;
   date = "2026-07-05";
   message = ''
     Added flake input 'roll-flow'

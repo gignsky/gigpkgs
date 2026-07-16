@@ -1,5 +1,6 @@
 {
   id = "2026-06-03-news-system-launch";
+  num = 2;
   date = "2026-06-03";
   message = ''
     Welcome to gigpkgs-news!

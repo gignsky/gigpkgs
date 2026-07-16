@@ -1,5 +1,6 @@
 {
   id = "2026-06-03-news-system-renamed";
+  num = 3;
   date = "2026-06-03";
   message = ''
     Welcome to gignews! Formerly, gigpkgs-new.s

@@ -47,6 +47,27 @@ def load-news [news_file: string] {
     }
 }
 
+# Resolve a reference (a numeric `num` or a full string `id`) to an entry id.
+# Returns null if nothing matches.
+def resolve-ref [entries: list, ref: string] {
+    let by_num = if ($ref =~ '^[0-9]+$') {
+        $entries | where num == ($ref | into int)
+    } else {
+        []
+    }
+
+    if (not ($by_num | is-empty)) {
+        ($by_num | first | get id)
+    } else {
+        let by_id = $entries | where id == $ref
+        if (not ($by_id | is-empty)) {
+            ($by_id | first | get id)
+        } else {
+            null
+        }
+    }
+}
+
 # Format and display a news entry
 def display-entry [entry: record, show_read: bool = false] {
     let read_entries = load-read-entries
@@ -55,7 +76,7 @@ def display-entry [entry: record, show_read: bool = false] {
     
     if $show_read or (not $is_read) {
         print $"(ansi cyan_bold)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━(ansi reset)"
-        print $"(ansi green_bold)($entry.date)(ansi reset)($read_marker) — (ansi yellow)($entry.id)(ansi reset)"
+        print $"(ansi purple_bold)#($entry.num)(ansi reset)  (ansi green_bold)($entry.date)(ansi reset)($read_marker) — (ansi yellow)($entry.id)(ansi reset)"
         print ""
         print $entry.message
         print ""
@@ -80,7 +101,7 @@ def show-unread [news_file: string] {
             display-entry $entry false
         }
         
-        print $"(ansi cyan)($unread | length) unread entries. Use 'gignews read-all' to mark all as read.(ansi reset)"
+        print $"(ansi cyan)($unread | length) unread entries. Use 'gignews read <#>' to mark one, or 'gignews read-all' to mark all as read.(ansi reset)"
     }
 }
 
@@ -100,13 +121,30 @@ def "main list" [
     }
 }
 
-# Mark a specific entry as read
+# Mark one or more entries as read (by number or string id).
+# Accepts space- or comma-separated refs, e.g. `gignews read 3 4 5` or `gignews read 3,4,5`.
 def "main read" [
-    id: string                          # Entry ID to mark as read
-    news_file: string = "@NEWS_JSON@"   # Will be substituted at build time
+    ...refs: string                        # Entry numbers (#) or string ids to mark as read
+    --news-file: string = "@NEWS_JSON@"    # Will be substituted at build time
 ] {
-    mark-read $id
-    print $"(ansi green)Marked '($id)' as read.(ansi reset)"
+    let entries = load-news $news_file
+    # Split any comma-separated tokens (e.g. "3,4,5") into individual refs
+    let all_refs = $refs | each { |r| $r | split row "," } | flatten | where { |it| $it != "" }
+
+    if ($all_refs | is-empty) {
+        print $"(ansi red)Error: no entry given. Usage: gignews read <#|id> [<#|id> ...](ansi reset)"
+        return
+    }
+
+    for ref in $all_refs {
+        let resolved = resolve-ref $entries $ref
+        if ($resolved == null) {
+            print $"(ansi red)Error: no news entry matching '($ref)'.(ansi reset)"
+        } else {
+            mark-read $resolved
+            print $"(ansi green)Marked '($resolved)' as read.(ansi reset)"
+        }
+    }
 }
 
 # Mark all entries as read
@@ -119,17 +157,18 @@ def "main read-all" [
     print $"(ansi green)Marked all ($all_ids | length) entries as read.(ansi reset)"
 }
 
-# Show a specific entry
+# Show a specific entry (by number or string id)
 def "main show" [
-    id: string                          # Entry ID to display
+    ref: string                         # Entry number (#) or string id to display
     news_file: string = "@NEWS_JSON@"   # Will be substituted at build time
 ] {
     let entries = load-news $news_file
-    let entry = $entries | where id == $id | first
-    
-    if ($entry | is-empty) {
-        print $"(ansi red)Error: Entry '($id)' not found.(ansi reset)"
+    let resolved = resolve-ref $entries $ref
+
+    if ($resolved == null) {
+        print $"(ansi red)Error: Entry '($ref)' not found.(ansi reset)"
     } else {
+        let entry = $entries | where id == $resolved | first
         display-entry $entry true
     }
 }

@@ -1,5 +1,6 @@
 {
   id = "2026-07-05-inputman-install-fupdate";
+  num = 5;
   date = "2026-07-05";
   message = ''
     Added flake input 'fupdate'
