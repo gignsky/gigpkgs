@@ -538,6 +538,19 @@ default_package_selection() {
   done
 }
 
+# Next monotonic `num` for a news entry: max existing num + 1 (1 if none).
+# Every entry must carry a unique `num` or the gignews collector throws
+# (news/default.nix), which fails `nix flake check`.
+next_news_num() {
+  local news_dir="news/entries" max=0 n f
+  for f in "$news_dir"/*.nix; do
+    [[ -e "$f" ]] || continue
+    n=$(grep -oE 'num[[:space:]]*=[[:space:]]*[0-9]+' "$f" | grep -oE '[0-9]+' | head -1)
+    if [[ -n "$n" ]] && ((n > max)); then max="$n"; fi
+  done
+  printf '%s' "$((max + 1))"
+}
+
 write_news_entry() {
   local action="$1" name="$2" details="$3"
   local news_dir="news/entries"
@@ -579,9 +592,13 @@ write_news_entry() {
     ;;
   esac
 
+  local num
+  num=$(next_news_num)
+
   {
     printf '{\n'
     printf '  id = "%s";\n' "$id"
+    printf '  num = %s;\n' "$num"
     printf '  date = "%s";\n' "$today"
     printf "  message = ''\n"
     printf '    %s\n' "$headline"
