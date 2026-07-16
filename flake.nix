@@ -34,18 +34,22 @@
   outputs =
     {
       self,
-      nixpkgs,
-      # nixpkgs-unstable,
       ...
     }@inputs:
     let
       # inherit (self) outputs;
-      lib = nixpkgs.lib.extend (_final: prev: import ./lib { lib = prev; });
+
+      # Base nixpkgs channel for this branch, selected by the channel.nix marker.
+      # gigos-* channel branches are CI-derived from the trunk by overwriting
+      # ONLY that file, so every output below descends from one consistent base.
+      channel = import ./channel.nix;
+      base = inputs.${channel};
+
+      lib = base.lib.extend (_final: prev: import ./lib { lib = prev; });
       system = "x86_64-linux";
 
-      # Build the super nixpkgs set:
-      # nixpkgs stable + gigpkgs overlays (additions, unstable-packages)
-      pkgs = import nixpkgs {
+      # Super nixpkgs: the selected base channel + gigpkgs overlays.
+      pkgs = import base {
         inherit system;
         config = {
           allowUnfree = true;
@@ -63,13 +67,14 @@
       # Consumers: inputs.gigpkgs.lib.scanPaths
       inherit lib;
 
-      # LegacyPackages — nixos-stable extended with gigpkgs custom packages.
-      # Use inputs.gigpkgs.legacyPackages.${system} in consuming flakes as a
-      # drop-in for nixpkgs.legacyPackages.${system} that includes gigpkgs packages.
+      # LegacyPackages — the branch's base channel extended with gigpkgs custom
+      # packages (same `base` as `pkgs` above — unified via channel.nix). Use
+      # inputs.gigpkgs.legacyPackages.${system} in consuming flakes as a drop-in
+      # for nixpkgs.legacyPackages.${system} that includes gigpkgs packages.
       legacyPackages = lib.genAttrs [
         "x86_64-linux"
         "aarch64-linux"
-      ] (s: inputs.nixos-stable.legacyPackages.${s}.extend self.overlays.default);
+      ] (s: base.legacyPackages.${s}.extend self.overlays.default);
 
       # Individual gigpkgs packages for direct access (e.g. `nix build .#locker`)
       packages.${system} = import ./pkgs {

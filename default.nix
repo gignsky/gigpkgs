@@ -44,7 +44,10 @@ let
         ;
     };
 
-  nixpkgsSrc = fetchNode "nixpkgs";
+  # Same base selection as flake.nix — honour the channel.nix marker so the
+  # `import nixpkgs {}` shim fetches the branch's base channel, not a hardcoded one.
+  channel = import ./channel.nix;
+  nixpkgsSrc = fetchNode channel;
   nixpkgsUnstableSrc = fetchNode "nixpkgs-unstable";
 
   pkgs = import nixpkgsSrc {
