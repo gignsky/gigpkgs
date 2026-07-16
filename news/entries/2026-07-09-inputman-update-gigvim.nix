@@ -1,5 +1,6 @@
 {
   id = "2026-07-09-inputman-update-gigvim";
+  num = 11;
   date = "2026-07-09";
   message = ''
     Updated flake input 'gigvim'

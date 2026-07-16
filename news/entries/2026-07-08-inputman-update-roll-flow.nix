@@ -1,5 +1,6 @@
 {
   id = "2026-07-08-inputman-update-roll-flow";
+  num = 7;
   date = "2026-07-08";
   message = ''
     Updated flake input 'roll-flow'

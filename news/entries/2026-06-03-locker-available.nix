@@ -1,5 +1,6 @@
 {
   id = "2026-06-03-locker-available";
+  num = 1;
   date = "2026-06-03";
   message = ''
     locker — Interactive flake lock updater
