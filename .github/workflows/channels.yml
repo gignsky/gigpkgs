@@ -1,0 +1,78 @@
+# Derive the gigos-* channel branches from the trunk.
+#
+# Each channel branch is the trunk + ONE file (channel.nix). This workflow, on
+# every push to the trunk, gates on a bare-minimum `nix flake check`, then for
+# each channel overwrites channel.nix and force-pushes to gigos-<channel>.
+# No source drift, no merge maintenance — the branches are pure projections.
+#
+# Triggers on both `main` and `master` so the planned trunk rename
+# (main -> master, per gigpkgs#14) needs no flag-day change here.
+name: channels
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: channels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Bare-minimum gate: the trunk must evaluate before we derive channels from it.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: flake check (eval gate)
+        run: nix flake check --no-build --accept-flake-config
+
+  derive:
+    needs: check
+    # Project onto channel branches on a real trunk push, or a manual dispatch
+    # (so the derive can be tested on demand). NEVER on PRs — we don't derive
+    # channel branches from unmerged code.
+    if: >-
+      (github.event_name == 'push'
+        && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - branch: gigos-unstable
+            channel: nixos-unstable
+          - branch: gigos-26.05
+            channel: nixos-2605
+          # gigos-stable is NOT a plain derive — it is a gated promotion
+          # (Hydra, gigpkgs#17). Intentionally excluded from this matrix.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Project trunk onto ${{ matrix.branch }} (channel=${{ matrix.channel }})
+        run: |
+          set -euo pipefail
+          git config user.name  "gigpkgs-bot"
+          git config user.email "gigpkgs-bot@users.noreply.github.com"
+
+          # Overwrite ONLY the marker; everything else is identical to the trunk.
+          {
+            printf '# CI-derived from %s (%s) — do not edit.\n' "${{ github.ref_name }}" "${{ github.sha }}"
+            printf '# Regenerated on every push to the trunk by .github/workflows/channels.yml\n'
+            printf '"%s"\n' "${{ matrix.channel }}"
+          } > channel.nix
+
+          git add channel.nix
+          git commit -m "derive(${{ matrix.branch }}): channel=${{ matrix.channel }} @ ${{ github.sha }}"
+          git push --force-with-lease origin "HEAD:refs/heads/${{ matrix.branch }}"
