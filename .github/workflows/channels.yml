@@ -5,13 +5,13 @@
 # each channel overwrites channel.nix and force-pushes to gigos-<channel>.
 # No source drift, no merge maintenance — the branches are pure projections.
 #
-# NOTE: `branches: [main]` tracks the current default branch. If/when the trunk
-# is renamed to `master` (per gigpkgs#14), update this trigger accordingly.
+# Triggers on both `main` and `master` so the planned trunk rename
+# (main -> master, per gigpkgs#14) needs no flag-day change here.
 name: channels
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
@@ -41,7 +41,8 @@ jobs:
     # (so the derive can be tested on demand). NEVER on PRs — we don't derive
     # channel branches from unmerged code.
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      (github.event_name == 'push'
+        && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
       || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
