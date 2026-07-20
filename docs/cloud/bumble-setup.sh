@@ -21,12 +21,31 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# 1. Install Nix, single-user / daemonless (so it inherits the proxy + CA env).
+# 1. Write /etc/nix/nix.conf BEFORE installing.
+#
+#    `build-users-group =` (empty) lets Nix install as root without the nixbld
+#    group that a single-user install never creates (otherwise the installer
+#    aborts with "group 'nixbld' ... does not exist"). `sandbox = false` avoids
+#    namespace sandboxing a container may disallow. The installer's bundled Nix
+#    reads this file, so it must exist first.
+# ---------------------------------------------------------------------------
+install -d -m 0755 /etc/nix
+cat > /etc/nix/nix.conf <<'EOF'
+build-users-group =
+sandbox = false
+experimental-features = nix-command flakes
+accept-flake-config = true
+warn-dirty = false
+max-jobs = auto
+EOF
+
+# ---------------------------------------------------------------------------
+# 2. Install Nix, single-user / daemonless (so it inherits the proxy + CA env).
 #
 #    Fetched from releases.nixos.org (a *.nixos.org subdomain, in the default
 #    Trusted allowlist) at a pinned version. The bare apex `nixos.org` used by
-#    the usual install one-liner is NOT covered by the `*.nixos.org` wildcard
-#    and 403s at the egress proxy. Bump NIX_VERSION to upgrade.
+#    the usual install one-liner is NOT covered by `*.nixos.org` and 403s at
+#    the egress proxy. Bump NIX_VERSION to upgrade.
 # ---------------------------------------------------------------------------
 NIX_VERSION="${NIX_VERSION:-2.31.2}"
 if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/nix ]; then
@@ -37,22 +56,18 @@ if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/
   rm -f "$installer"
 fi
 
+# ---------------------------------------------------------------------------
+# 3. Load Nix into this script's shell (nix.sh needs $USER; set it + fall back
+#    to prepending the profile bin directly).
+# ---------------------------------------------------------------------------
+export USER="${USER:-root}"
+export HOME="${HOME:-/root}"
 # shellcheck disable=SC1091
-. "$HOME/.nix-profile/etc/profile.d/nix.sh"
+[ -e "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
+export PATH="$HOME/.nix-profile/bin:$PATH"
 
 # ---------------------------------------------------------------------------
-# 2. Global Nix config: flakes + CI-friendly defaults.
-# ---------------------------------------------------------------------------
-install -d -m 0755 /etc/nix
-cat > /etc/nix/nix.conf <<'EOF'
-experimental-features = nix-command flakes
-accept-flake-config = true
-warn-dirty = false
-max-jobs = auto
-EOF
-
-# ---------------------------------------------------------------------------
-# 3. Fill the toolchain gaps from nixpkgs.
+# 4. Fill the toolchain gaps from nixpkgs.
 #    - Nix ecosystem: direnv (+ nix-direnv), just, nushell
 #    - Rust dev components missing from the base rustc/cargo image
 #    Python's base tooling (uv/ruff/poetry/pytest/...) is already complete,
@@ -77,9 +92,9 @@ if ! grep -q nix-direnv "$HOME/.config/direnv/direnvrc" 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Put Nix + the profile tools on the default PATH (non-login shell safe).
+# 5. Put Nix + the profile tools on the default PATH (non-login shell safe).
 # ---------------------------------------------------------------------------
-ln -sf /root/.nix-profile/bin/* /usr/local/bin/
+ln -sf "$HOME"/.nix-profile/bin/* /usr/local/bin/
 
 # bumble is repo-agnostic, so there is no devShell to pre-warm here. In a
 # session, run `nix develop -c <cmd>` in a flake project to get that project's

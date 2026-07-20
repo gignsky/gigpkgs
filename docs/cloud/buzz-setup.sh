@@ -14,28 +14,48 @@
 #     poetry, ruff, pytest, ...). It does NOT ship Nix, direnv or Nushell -
 #     that is what we add here.
 #   * TLS + egress proxy are already wired: HTTPS_PROXY and NIX_SSL_CERT_FILE
-#     are pre-set in the environment and the system trust store already
-#     contains the proxy CA, so Nix fetches succeed with no extra config.
+#     are pre-set and the system trust store already contains the proxy CA, so
+#     Nix fetches through the proxy with no extra config.
 #   * *.nixos.org (incl. cache.nixos.org / releases.nixos.org) and crates.io
-#     are in the default "Trusted" network allowlist, so "Trusted" access is
-#     enough for this script.
+#     are in the default "Trusted" network allowlist, so "Trusted" is enough.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# 1. Install Nix, single-user / daemonless.
+# 1. Write /etc/nix/nix.conf BEFORE installing.
+#
+#    This is the fix for the "group 'nixbld' ... does not exist" failure: Nix's
+#    compiled-in default is `build-users-group = nixbld`, and when Nix runs as
+#    root it tries to drop to a build user in that group. In a single-user
+#    install there is no nixbld group, so the install aborts. Setting
+#    `build-users-group =` (empty) makes root build directly; `sandbox = false`
+#    avoids namespace sandboxing that a container may disallow. The installer's
+#    own bundled Nix reads this file, so it must exist first.
+# ---------------------------------------------------------------------------
+install -d -m 0755 /etc/nix
+cat > /etc/nix/nix.conf <<'EOF'
+build-users-group =
+sandbox = false
+experimental-features = nix-command flakes
+accept-flake-config = true
+warn-dirty = false
+max-jobs = auto
+EOF
+
+# ---------------------------------------------------------------------------
+# 2. Install Nix, single-user / daemonless.
 #
 #    Daemonless is deliberate: the install and all later builds run as root and
 #    inherit HTTPS_PROXY + NIX_SSL_CERT_FILE, so substituter downloads work
 #    through the egress proxy. A nix-daemon would run in its own environment,
 #    would NOT inherit those variables, and its fetches would fail.
 #
-#    We fetch the installer from releases.nixos.org (a *.nixos.org subdomain,
-#    which IS in the default Trusted allowlist) at a pinned version. The usual
+#    We fetch a pinned installer from releases.nixos.org (a *.nixos.org
+#    subdomain, in the default Trusted allowlist). The usual
 #    https://nixos.org/nix/install one-liner hits the bare apex `nixos.org`,
-#    which the allowlist's `*.nixos.org` wildcard does NOT cover, so it 403s at
-#    the egress proxy. The pinned installer and its tarball both live under
-#    releases.nixos.org, and Nix's own fetches use cache.nixos.org, so nothing
-#    here touches the blocked apex. Bump NIX_VERSION to upgrade.
+#    which `*.nixos.org` does NOT cover, so it 403s at the egress proxy. The
+#    pinned installer and its tarball both live under releases.nixos.org, and
+#    Nix's own fetches use cache.nixos.org, so nothing touches the blocked
+#    apex. Bump NIX_VERSION to upgrade (see https://releases.nixos.org/?prefix=nix/).
 # ---------------------------------------------------------------------------
 NIX_VERSION="${NIX_VERSION:-2.31.2}"
 if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/nix ]; then
@@ -46,24 +66,19 @@ if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/
   rm -f "$installer"
 fi
 
-# Load Nix into this script's shell.
+# ---------------------------------------------------------------------------
+# 3. Load Nix into this script's shell. The profile's nix.sh only exports PATH
+#    when $USER is set, and a non-login setup shell may not have it, so set
+#    USER/HOME first and then prepend the profile bin directly as a fallback.
+# ---------------------------------------------------------------------------
+export USER="${USER:-root}"
+export HOME="${HOME:-/root}"
 # shellcheck disable=SC1091
-. "$HOME/.nix-profile/etc/profile.d/nix.sh"
+[ -e "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
+export PATH="$HOME/.nix-profile/bin:$PATH"
 
 # ---------------------------------------------------------------------------
-# 2. Global Nix config: flakes on, plus CI-friendly defaults.
-#    Nix reads /etc/nix/nix.conf in single-user mode too.
-# ---------------------------------------------------------------------------
-install -d -m 0755 /etc/nix
-cat > /etc/nix/nix.conf <<'EOF'
-experimental-features = nix-command flakes
-accept-flake-config = true
-warn-dirty = false
-max-jobs = auto
-EOF
-
-# ---------------------------------------------------------------------------
-# 3. Handy CLIs from nixpkgs into the root profile:
+# 4. Handy CLIs from nixpkgs into the root profile:
 #    direnv (+ nix-direnv, to make the repo's `use flake` fast), just, nushell.
 # ---------------------------------------------------------------------------
 nix profile install \
@@ -80,15 +95,14 @@ if ! grep -q nix-direnv "$HOME/.config/direnv/direnvrc" 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Put Nix + the profile tools on the default PATH.
-#    Claude's Bash tool runs non-login shells that never source
-#    ~/.nix-profile/etc/profile.d/nix.sh, so symlink into /usr/local/bin,
-#    which is always on PATH.
+# 5. Put Nix + the profile tools on the default PATH for Claude's shells.
+#    Claude's Bash tool runs non-login shells that never source nix.sh, so
+#    symlink into /usr/local/bin, which is always on PATH.
 # ---------------------------------------------------------------------------
-ln -sf /root/.nix-profile/bin/* /usr/local/bin/
+ln -sf "$HOME"/.nix-profile/bin/* /usr/local/bin/
 
 # ---------------------------------------------------------------------------
-# 5. Pre-warm the gigpkgs devShell so its inputs and custom packages
+# 6. Pre-warm the gigpkgs devShell so its inputs and custom packages
 #    (locker, inputman, upjust, quick-results, nixfmt, statix, deadnix, ...)
 #    are baked into the snapshot. Bounded + non-fatal so it can never block
 #    session start; whatever it fetches before the timeout is still cached.

@@ -98,6 +98,40 @@ the environment to **Custom** network access, keep the defaults, and add
 `nixos.org` to the allowlist. The pinned-installer approach keeps `Trusted`
 working with zero network changes, so the scripts use that.)
 
+### Gotcha: personal `github:` flake inputs (the `fupdate` case)
+
+The GitHub proxy limits archive / codeload downloads to the repos **attached to
+the session**, independent of network level and independent of public/private
+status. Verified from a session scoped to `gigpkgs`:
+
+| Request | Result |
+| :------ | :----- |
+| `github.com/gignsky/fupdate/archive/<rev>.tar.gz` (unattached) | `403` |
+| `codeload.github.com/gignsky/fupdate/tar.gz/<rev>` | `403` |
+| `github.com/NixOS/nix/archive/...` (public, unattached) | `403` |
+| `raw.githubusercontent.com/gignsky/fupdate/<rev>/flake.nix` | `200` |
+
+`gigpkgs`'s `flake.nix` has `fupdate.url = "github:gignsky/fupdate"`. Common
+inputs like `nixpkgs` / `home-manager` resolve because their **source store
+paths are substituted from `cache.nixos.org`**, so no GitHub archive fetch
+happens. `fupdate` is in no binary cache, so Nix falls back to the GitHub
+archive endpoint — which the proxy `403`s. Result: `nix develop` (and the
+buzz pre-warm) fail on the `fupdate` input in a `gigpkgs`-only session.
+
+The pre-warm is `|| true`, so this never blocks session start — but to make
+`nix develop` actually work in-session you need one of:
+
+1. **Attach `fupdate` (and any other personal `github:` inputs) to the
+   session** — this is exactly what the `403` body means by *"Use add_repo to
+   request access"*. Then Nix's archive fetch is allowed.
+2. **Push `fupdate` (and `gigpkgs`) to a binary cache** (e.g. a Cachix cache)
+   and add it as a substituter: `nix.conf` `extra-substituters` +
+   `extra-trusted-public-keys`, plus **Custom** network access adding
+   `*.cachix.org` / `cachix.org`. Then the source is substituted like nixpkgs
+   and no GitHub archive fetch is needed. This is the most robust CI answer.
+3. **Make `fupdate` optional in the default devShell** so `nix develop` opens
+   without it, treating it as a nice-to-have rather than a hard input.
+
 ## TLS / proxy — already handled
 
 All outbound HTTPS goes through the session's egress proxy, and the
