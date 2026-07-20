@@ -16,24 +16,6 @@
         "type": "github"
       }
     },
-    "fupdate": {
-      "inputs": {
-        "nixpkgs": "nixpkgs"
-      },
-      "locked": {
-        "lastModified": 1783289158,
-        "narHash": "sha256-sanmLYbaU/D46yTpLFcLbhhSpLasGuw36AlX1qJlAso=",
-        "owner": "gignsky",
-        "repo": "fupdate",
-        "rev": "fc92a7dc6f19c2f07192770e9df997ba12e83135",
-        "type": "github"
-      },
-      "original": {
-        "owner": "gignsky",
-        "repo": "fupdate",
-        "type": "github"
-      }
-    },
     "gitignore": {
       "inputs": {
         "nixpkgs": [
@@ -108,22 +90,6 @@
         "type": "github"
       }
     },
-    "nixpkgs": {
-      "locked": {
-        "lastModified": 1695145219,
-        "narHash": "sha256-Eoe9IHbvmo5wEDeJXKFOpKUwxYJIOxKUesounVccNYk=",
-        "owner": "nixos",
-        "repo": "nixpkgs",
-        "rev": "5ba549eafcf3e33405e5f66decd1a72356632b96",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nixos",
-        "ref": "nixos-unstable",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
     "nixpkgs-unstable": {
       "locked": {
         "lastModified": 1781136106,
@@ -164,7 +130,6 @@
     },
     "root": {
       "inputs": {
-        "fupdate": "fupdate",
         "home-manager": "home-manager",
         "nixos-2605": "nixos-2605",
         "nixos-stable": [
