@@ -1,7 +1,7 @@
 config_version = 1
 repo_root = "/home/gig/local_repos/gigpkgs"
-rolling_branch = "rolling"
-stable_branch = "main"
+rolling_branch = "master"
+stable_branch = "rolling"
 roll_prefix = "roll/"
 username = "gig"
 hosts = []
