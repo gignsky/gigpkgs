@@ -28,10 +28,22 @@ set -euo pipefail
 #    inherit HTTPS_PROXY + NIX_SSL_CERT_FILE, so substituter downloads work
 #    through the egress proxy. A nix-daemon would run in its own environment,
 #    would NOT inherit those variables, and its fetches would fail.
+#
+#    We fetch the installer from releases.nixos.org (a *.nixos.org subdomain,
+#    which IS in the default Trusted allowlist) at a pinned version. The usual
+#    https://nixos.org/nix/install one-liner hits the bare apex `nixos.org`,
+#    which the allowlist's `*.nixos.org` wildcard does NOT cover, so it 403s at
+#    the egress proxy. The pinned installer and its tarball both live under
+#    releases.nixos.org, and Nix's own fetches use cache.nixos.org, so nothing
+#    here touches the blocked apex. Bump NIX_VERSION to upgrade.
 # ---------------------------------------------------------------------------
+NIX_VERSION="${NIX_VERSION:-2.31.2}"
 if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/nix ]; then
-  sh <(curl --proto '=https' --tlsv1.2 -sSf -L https://nixos.org/nix/install) \
-    --no-daemon --no-channel-add
+  installer="$(mktemp)"
+  curl --proto '=https' --tlsv1.2 -sSf -L \
+    "https://releases.nixos.org/nix/nix-${NIX_VERSION}/install" -o "$installer"
+  sh "$installer" --no-daemon --no-channel-add
+  rm -f "$installer"
 fi
 
 # Load Nix into this script's shell.

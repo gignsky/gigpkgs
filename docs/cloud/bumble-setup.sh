@@ -22,10 +22,19 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # 1. Install Nix, single-user / daemonless (so it inherits the proxy + CA env).
+#
+#    Fetched from releases.nixos.org (a *.nixos.org subdomain, in the default
+#    Trusted allowlist) at a pinned version. The bare apex `nixos.org` used by
+#    the usual install one-liner is NOT covered by the `*.nixos.org` wildcard
+#    and 403s at the egress proxy. Bump NIX_VERSION to upgrade.
 # ---------------------------------------------------------------------------
+NIX_VERSION="${NIX_VERSION:-2.31.2}"
 if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/nix ]; then
-  sh <(curl --proto '=https' --tlsv1.2 -sSf -L https://nixos.org/nix/install) \
-    --no-daemon --no-channel-add
+  installer="$(mktemp)"
+  curl --proto '=https' --tlsv1.2 -sSf -L \
+    "https://releases.nixos.org/nix/nix-${NIX_VERSION}/install" -o "$installer"
+  sh "$installer" --no-daemon --no-channel-add
+  rm -f "$installer"
 fi
 
 # shellcheck disable=SC1091

@@ -59,11 +59,12 @@ and Nushell.
 
 ## Network access
 
-`Trusted` is sufficient for both environments. The default allowlist already
-includes everything the scripts and flakes reach:
+`Trusted` is sufficient for both environments — **no `Custom` allowlist is
+needed**. The default allowlist already includes everything the scripts and
+flakes reach:
 
 - `*.nixos.org` → `cache.nixos.org`, `releases.nixos.org`, `channels.nixos.org`
-  (Nix install + binary cache + channels).
+  (Nix binary cache + channels, and the **installer**, see the gotcha below).
 - `crates.io`, `static.crates.io`, `index.crates.io` (Rust).
 - `pypi.org`, `files.pythonhosted.org` (Python).
 - `github.com` + `codeload.github.com` + `raw.githubusercontent.com` (flake
@@ -74,6 +75,28 @@ Use **Custom** (with *"include default package managers"* checked) only if you
 add a personal binary cache — e.g. a Cachix cache — which would need
 `*.cachix.org` and `cachix.org` added to the allowlist. The current
 `flake.nix` declares no extra substituter, so `Trusted` is enough today.
+
+### Gotcha: the bare `nixos.org` apex is blocked
+
+The default allowlist entry is `*.nixos.org`, and that wildcard matches
+**subdomains only**, not the apex `nixos.org`. The standard installer one-liner
+`curl -L https://nixos.org/nix/install` therefore fails at the egress proxy
+with `curl: (22) ... 403` / `CONNECT tunnel failed, response 403`, which then
+cascades into `/root/.nix-profile/etc/profile.d/nix.sh: No such file or
+directory` because Nix never got installed.
+
+The setup scripts avoid this by fetching a **pinned** installer straight from
+`releases.nixos.org/nix/nix-<version>/install` (a subdomain, allowed). That
+installer downloads its tarball from `releases.nixos.org` and Nix then pulls
+from `cache.nixos.org` — all subdomains, none touch the blocked apex. Bump the
+`NIX_VERSION` value at the top of the install block (or set a `NIX_VERSION`
+environment variable) to upgrade; find current versions by browsing
+<https://releases.nixos.org/?prefix=nix/>.
+
+(If you would rather run the vanilla one-liner, the alternative is to switch
+the environment to **Custom** network access, keep the defaults, and add
+`nixos.org` to the allowlist. The pinned-installer approach keeps `Trusted`
+working with zero network changes, so the scripts use that.)
 
 ## TLS / proxy — already handled
 
