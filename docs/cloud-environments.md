@@ -15,6 +15,13 @@ Both make `nix` fully usable for **build / run / eval / flake** operations. The
 flake **devShell is intentionally not auto-loaded** — see
 [The devShell & the GitHub proxy](#the-devshell--the-github-proxy) for why.
 
+> **Status — confirmed working end-to-end (2026-07-21).** The `buzz` setup
+> script has been run from a **cold cache**: Nix installs from the pinned
+> `releases.nixos.org` installer, `/etc/nix/nix.conf` is written, the profile
+> tools land on `PATH`, and `nix build/run/eval/flake` against `gigpkgs` all
+> succeed with the devShell left off. The install-if-missing block (step 1) is
+> the confirmed working path — do not regress it to an assert.
+
 The scripts are the source of truth, kept in-repo. To apply them you **paste
 the script text into the environment's "Setup script" field** in the web UI —
 cloud environment config (setup script, env vars, network access) lives in the
