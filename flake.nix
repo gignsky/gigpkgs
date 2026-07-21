@@ -29,6 +29,28 @@
 
     fupdate.url = "github:gignsky/fupdate";
 
+    # roll-flow — channel-aware multi-version pins.
+    #
+    # Sourced as `flake = false` and built with gigpkgs' own callPackage
+    # (./pkgs/default.nix). roll-flow's OWN flake depends on gigpkgs, so
+    # importing it as a flake input would be circular and would drag in a
+    # second gigpkgs + nixpkgs; a flake-false source pin avoids all of that and
+    # locks trivially (no transitive inputs).
+    #
+    # channel.nix + channel-sources.nix pick which sibling backs `pkgs.roll-flow`
+    # per channel. Both files are identical across gigos-* branches, so the
+    # selection survives CI projection (which only rewrites channel.nix). New
+    # frozen siblings (e.g. roll-flow-frozen-v0-2-99) are added later by
+    # `inputman freeze`.
+    roll-flow-develop = {
+      url = "github:gignsky/roll-flow/develop";
+      flake = false;
+    };
+    roll-flow-main = {
+      url = "github:gignsky/roll-flow/main";
+      flake = false;
+    };
+
   };
 
   outputs =
@@ -168,6 +190,7 @@
               locker
               ripgrep
               inputman
+              roll-flow
               upignore
               ;
           }

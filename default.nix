@@ -50,15 +50,32 @@ let
   nixpkgsSrc = fetchNode channel;
   nixpkgsUnstableSrc = fetchNode "nixpkgs-unstable";
 
+  # Channel-aware roll-flow source, kept in sync with the flake path (./pkgs)
+  # so `import nixpkgs {}` exposes the same roll-flow the flake does. Guarded on
+  # the lock actually carrying the selected input, so the shim still evaluates
+  # before `nix flake lock` has populated the roll-flow siblings.
+  rollFlowSources = (import ./channel-sources.nix).roll-flow;
+  rollFlowName = rollFlowSources.${channel} or rollFlowSources.default;
+  rollFlowOverlay =
+    if rootNode.inputs ? ${rollFlowName} then
+      (final: _prev: {
+        roll-flow = final.callPackage "${fetchNode rollFlowName}/package.nix" { };
+      })
+    else
+      (_final: _prev: { });
+
   pkgs = import nixpkgsSrc {
     inherit system config;
     overlays = overlays ++ [
       (final: _prev: import ./pkgs { pkgs = final; })
-      (_final: _prev: {
-        unstable = import nixpkgsUnstableSrc {
-          inherit system;
-          config.allowUnfree = true;
-        };
+      rollFlowOverlay
+      (final: _prev: {
+        unstable =
+          (import nixpkgsUnstableSrc {
+            inherit system;
+            config.allowUnfree = true;
+          })
+          // (if final ? roll-flow then { inherit (final) roll-flow; } else { });
       })
     ];
   };

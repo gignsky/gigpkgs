@@ -21,11 +21,17 @@ in
   inherit additions;
 
   # When applied, the unstable nixpkgs set (declared in the flake inputs) will
-  # be accessible through 'pkgs.unstable'
+  # be accessible through 'pkgs.unstable'. The channel-selected roll-flow (added
+  # by the `default`/additions overlay) is also surfaced under pkgs.unstable so
+  # consumers reaching through `unstable.roll-flow` resolve to the same package.
   unstable-packages = final: _prev: {
-    unstable = import inputs.nixpkgs-unstable {
-      inherit (final.stdenv.hostPlatform) system;
-      config.allowUnfree = true;
-    };
+    unstable =
+      (import inputs.nixpkgs-unstable {
+        inherit (final.stdenv.hostPlatform) system;
+        config.allowUnfree = true;
+      })
+      // {
+        inherit (final) roll-flow;
+      };
   };
 }
