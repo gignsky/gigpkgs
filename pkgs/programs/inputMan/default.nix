@@ -9,8 +9,10 @@ let
     nativeBuildInputs = [ pkgs.makeWrapper ];
 
     installPhase = ''
-      mkdir -p $out/bin
-      cp ${./inputMan.sh} $out/bin/inputman
+      mkdir -p $out/bin $out/libexec
+      cp ${./inputman-lib.sh} $out/libexec/inputman-lib.sh
+      substitute ${./inputMan.sh} $out/bin/inputman \
+        --subst-var-by INPUTMAN_LIB "$out/libexec/inputman-lib.sh"
       chmod +x $out/bin/inputman
 
       wrapProgram $out/bin/inputman \
@@ -21,6 +23,8 @@ let
             pkgs.jq
             pkgs.perl
             pkgs.pre-commit
+            pkgs.locker
+            pkgs.fupdate
           ]
         }
     '';
@@ -292,8 +296,134 @@ pkg
         }
         ''
           set -e
-          shellcheck ${./inputMan.sh}
+          workdir=$(mktemp -d)
+          cp ${./inputman-lib.sh} "$workdir/inputman-lib.sh"
+          # Materialize the source path so `shellcheck -x` can follow it.
+          sed 's|@INPUTMAN_LIB@|inputman-lib.sh|' ${./inputMan.sh} > "$workdir/inputman"
+          cd "$workdir"
+          shellcheck -x inputman inputman-lib.sh
           echo "shellcheck passed" > $out
+        '';
+
+    slug-version =
+      pkgs.runCommand "inputman-slug-version-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          test "$(inputman __slug-version v0.2.99)" = "v0-2-99"
+          test "$(inputman __slug-version develop)" = "develop"
+          # invalid slug (leading digit) must fail
+          if inputman __slug-version 1.2.3 > /dev/null 2>&1; then
+            echo "expected slug_version to reject '1.2.3'"; exit 1
+          fi
+          echo "slug_version verified" > $out
+        '';
+
+    channel-map-set =
+      pkgs.runCommand "inputman-channel-map-set-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          cat > channel-sources.nix <<'MAP'
+          {
+            roll-flow = {
+              "nixos-unstable" = "roll-flow-develop";
+              "nixos-2605" = "roll-flow-main";
+              default = "roll-flow-main";
+            };
+          }
+          MAP
+
+          # Replace an existing channel entry.
+          inputman __patch-channel-map-set roll-flow nixos-2605 roll-flow-frozen-v0-2-99
+          grep -q '"nixos-2605" = "roll-flow-frozen-v0-2-99";' channel-sources.nix
+          grep -q '"nixos-unstable" = "roll-flow-develop";' channel-sources.nix
+          grep -q 'default = "roll-flow-main";' channel-sources.nix
+
+          # Insert a brand-new channel entry (before default).
+          inputman __patch-channel-map-set roll-flow nixos-stable roll-flow-main
+          grep -q '"nixos-stable" = "roll-flow-main";' channel-sources.nix
+
+          # Auto-create a block for a program with no block yet.
+          inputman __ensure-channel-map-block gigvim
+          inputman __patch-channel-map-set gigvim nixos-unstable gigvim-develop
+          grep -q '"nixos-unstable" = "gigvim-develop";' channel-sources.nix
+
+          echo "channel_map_set verified" > $out
+        '';
+
+    freeze-patch =
+      pkgs.runCommand "inputman-freeze-patch-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          cat > flake.nix <<'FLAKE'
+          {
+              inputs = {
+                  nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+                  roll-flow-main.url = "github:gignsky/roll-flow/main";
+              };
+              outputs = { self, ... }: { };
+          }
+          FLAKE
+
+          cat > channel-sources.nix <<'MAP'
+          {
+            roll-flow = {
+              "nixos-2605" = "roll-flow-main";
+              default = "roll-flow-main";
+            };
+          }
+          MAP
+
+          # Freeze to an explicit tag (no flake.lock needed for --tag path); use
+          # the internal patchers directly since `freeze` also invokes locker/nix.
+          inputman __patch-flake-add roll-flow-frozen-v0-2-99 github:gignsky/roll-flow/v0.2.99 nixpkgs=nixpkgs
+          inputman __patch-channel-map-set roll-flow nixos-2605 roll-flow-frozen-v0-2-99
+
+          grep -q 'roll-flow-frozen-v0-2-99.url = "github:gignsky/roll-flow/v0.2.99";' flake.nix
+          grep -q 'roll-flow-frozen-v0-2-99.inputs.nixpkgs.follows = "nixpkgs";' flake.nix
+          grep -q '"nixos-2605" = "roll-flow-frozen-v0-2-99";' channel-sources.nix
+
+          echo "freeze_patch verified" > $out
+        '';
+
+    generate-group-aggregator =
+      pkgs.runCommand "inputman-group-aggregator-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          inputman __generate-group-aggregator roll-flow > agg.nix
+          grep -q 'channel   = import ../../channel.nix;' agg.nix
+          grep -q '(import ../../channel-sources.nix).roll-flow;' agg.nix
+          grep -q 'roll-flow = src.packages.''${system}.default;' agg.nix
+          echo "group_aggregator verified" > $out
         '';
   };
 }
