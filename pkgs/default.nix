@@ -38,6 +38,7 @@ inputPackages
     cargo-update
     gignews
     inputman
+    inputman-lite
     locker
     quick-results
     supertree

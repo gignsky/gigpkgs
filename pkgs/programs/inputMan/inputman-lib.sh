@@ -731,6 +731,52 @@ patch_channel_map_set() {
   rm -f "$err_file"
 }
 
+# ── Generic marker/anchor text edits (used by inputman-lite) ────────────────
+
+# Insert <content> immediately after the line containing <anchor> in <file>.
+# Dies if the anchor is absent. <content> should already be newline-terminated.
+insert_after_anchor() {
+  local file="$1" anchor="$2" content="$3"
+  [[ -f "$file" ]] || die "file '${file}' not found"
+  grep -qF -- "$anchor" "$file" || die "anchor '${anchor}' not found in ${file}"
+
+  local err_file
+  err_file=$(mktemp)
+  if ! ANCHOR="$anchor" CONTENT="$content" perl -0pi -e '
+    my $a = $ENV{ANCHOR};
+    my $c = $ENV{CONTENT};
+    my $idx = index($_, $a);
+    my $eol = index($_, "\n", $idx);
+    $eol = length($_) if $eol < 0;
+    substr($_, $eol + 1, 0, $c);
+  ' "$file" 2>"$err_file"; then
+    local err
+    err=$(cat "$err_file")
+    rm -f "$err_file"
+    die "Failed to edit ${file}: ${err:-unknown error}"
+  fi
+  rm -f "$err_file"
+}
+
+# Remove an inclusive <begin>…<end> marker block from <file> (no-op if absent).
+remove_marker_block() {
+  local file="$1" begin="$2" end="$3"
+  [[ -f "$file" ]] || return 0
+  local err_file
+  err_file=$(mktemp)
+  if ! BEGIN_M="$begin" END_M="$end" perl -0pi -e '
+    my $b = quotemeta($ENV{BEGIN_M});
+    my $e = quotemeta($ENV{END_M});
+    s/^[^\n]*$b.*?$e[^\n]*\n//smg;
+  ' "$file" 2>"$err_file"; then
+    local err
+    err=$(cat "$err_file")
+    rm -f "$err_file"
+    die "Failed to edit ${file}: ${err:-unknown error}"
+  fi
+  rm -f "$err_file"
+}
+
 # Ensure channel-sources.nix has a `<program> = { … };` block; create an empty
 # one (inserted before the file's final closing brace) if absent. Idempotent.
 ensure_channel_map_block() {

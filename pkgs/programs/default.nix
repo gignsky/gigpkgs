@@ -18,6 +18,7 @@
         exit 1
       '';
   inputman = import ./inputMan { inherit pkgs; };
+  inputman-lite = import ./inputman-lite { inherit pkgs; };
   locker = import ./locker.nix { inherit pkgs; };
   quick-results = import ./quick-results.nix { inherit pkgs; };
   supertree = import ./supertree.nix { inherit pkgs; };

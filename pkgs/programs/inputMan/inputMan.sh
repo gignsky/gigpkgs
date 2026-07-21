@@ -1033,6 +1033,16 @@ __locked-github-base)
   locked_github_base "$1"
   echo
   ;;
+__insert-after-anchor)
+  shift
+  [[ $# -eq 3 ]] || die "Usage: inputman __insert-after-anchor <file> <anchor> <content>"
+  insert_after_anchor "$1" "$2" "$3"
+  ;;
+__remove-marker-block)
+  shift
+  [[ $# -eq 3 ]] || die "Usage: inputman __remove-marker-block <file> <begin> <end>"
+  remove_marker_block "$1" "$2" "$3"
+  ;;
 help | -h | --help) usage ;;
 *) die "Unknown command: ${1}. Run 'inputman help' for usage." ;;
 esac
