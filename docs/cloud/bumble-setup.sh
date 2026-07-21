@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# =============================================================================
 # Setup script for the "bumble" cloud environment (Claude Code on the web).
 #
 # Where it goes: claude.ai/code -> environment selector -> Add environment ->
@@ -7,48 +8,33 @@
 # Target: a general polyglot runner for Nix + Rust + Python + Nushell projects
 #         (not tied to any single repo).
 #
-# Facts this script relies on (see docs/cloud-environments.md for sources):
-#   * Runs as root on Ubuntu 24.04, once per environment-cache build; the
-#     result is snapshotted and reused (cache TTL ~7 days).
-#   * The base image already ships Rust (rustc/cargo) and a full Python stack
-#     (pip, uv, poetry, black, mypy, pytest, ruff). We add what it lacks -
-#     Nix + flakes, direnv, Nushell - and the Rust dev components (clippy,
-#     rustfmt, rust-analyzer) that the bare rustc/cargo image omits.
-#   * TLS + egress proxy are pre-wired (HTTPS_PROXY + NIX_SSL_CERT_FILE set,
-#     proxy CA already in the system trust store), so Nix fetches just work.
-#   * "Trusted" network access is enough: *.nixos.org, crates.io and pypi.org
-#     are all in the default allowlist.
+# Same philosophy as buzz: `nix` fully usable for build / run / eval / flake
+# operations; any repo's flake devShell is NOT auto-loaded, because a devShell
+# whose inputs include personal / non-authorized github: flakes will 403 under
+# the GitHub proxy (see docs/cloud-environments.md). Plain nix build/run/eval
+# do not need the devShell.
+# =============================================================================
 set -euo pipefail
+echo "==> bumble nix setup starting"
 
-# ---------------------------------------------------------------------------
-# 1. Write /etc/nix/nix.conf BEFORE installing.
-#
-#    `build-users-group =` (empty) lets Nix install as root without the nixbld
-#    group that a single-user install never creates (otherwise the installer
-#    aborts with "group 'nixbld' ... does not exist"). `sandbox = false` avoids
-#    namespace sandboxing a container may disallow. The installer's bundled Nix
-#    reads this file, so it must exist first.
-# ---------------------------------------------------------------------------
-install -d -m 0755 /etc/nix
-cat > /etc/nix/nix.conf <<'EOF'
+# --- 1. Install Nix if absent (install-if-missing, NOT assert) --------------
+#    The base image (Ubuntu 24.04) does NOT ship Nix; a prior run bakes /nix
+#    into the environment-cache snapshot, so this is a no-op on a warm cache
+#    and installs on a cold one (incl. every time you edit this script). nix.conf
+#    is written first so single-user Nix installs as root without the nixbld
+#    group; the installer is pinned from releases.nixos.org (allowlisted; the
+#    bare apex nixos.org is not).
+if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/nix ]; then
+  install -d -m 0755 /etc/nix
+  cat > /etc/nix/nix.conf <<'EOF'
 build-users-group =
 sandbox = false
-experimental-features = nix-command flakes
+experimental-features = nix-command flakes fetch-tree
 accept-flake-config = true
 warn-dirty = false
 max-jobs = auto
 EOF
-
-# ---------------------------------------------------------------------------
-# 2. Install Nix, single-user / daemonless (so it inherits the proxy + CA env).
-#
-#    Fetched from releases.nixos.org (a *.nixos.org subdomain, in the default
-#    Trusted allowlist) at a pinned version. The bare apex `nixos.org` used by
-#    the usual install one-liner is NOT covered by `*.nixos.org` and 403s at
-#    the egress proxy. Bump NIX_VERSION to upgrade.
-# ---------------------------------------------------------------------------
-NIX_VERSION="${NIX_VERSION:-2.31.2}"
-if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/nix ]; then
+  NIX_VERSION="${NIX_VERSION:-2.31.2}"
   installer="$(mktemp)"
   curl --proto '=https' --tlsv1.2 -sSf -L \
     "https://releases.nixos.org/nix/nix-${NIX_VERSION}/install" -o "$installer"
@@ -56,24 +42,27 @@ if ! command -v nix >/dev/null 2>&1 && [ ! -e /nix/var/nix/profiles/default/bin/
   rm -f "$installer"
 fi
 
-# ---------------------------------------------------------------------------
-# 3. Load Nix into this script's shell (nix.sh needs $USER; set it + fall back
-#    to prepending the profile bin directly).
-# ---------------------------------------------------------------------------
+# --- 2. Load Nix into this shell --------------------------------------------
 export USER="${USER:-root}"
 export HOME="${HOME:-/root}"
 # shellcheck disable=SC1091
 [ -e "$HOME/.nix-profile/etc/profile.d/nix.sh" ] && . "$HOME/.nix-profile/etc/profile.d/nix.sh"
 export PATH="$HOME/.nix-profile/bin:$PATH"
+command -v nix >/dev/null 2>&1 || { echo "ERROR: nix not on PATH after install step" >&2; exit 1; }
+echo "    nix: $(nix --version)"
 
-# ---------------------------------------------------------------------------
-# 4. Fill the toolchain gaps from nixpkgs.
-#    - Nix ecosystem: direnv (+ nix-direnv), just, nushell
-#    - Rust dev components missing from the base rustc/cargo image
-#    Python's base tooling (uv/ruff/poetry/pytest/...) is already complete,
-#    so we do not duplicate it here; per-project pins come from each repo's
-#    own flake via `nix develop -c`.
-# ---------------------------------------------------------------------------
+# --- 3. Ensure flake / nix-command features are on (idempotent) -------------
+install -d -m 0755 /etc/nix
+grep -qs '^experimental-features' /etc/nix/nix.conf 2>/dev/null || \
+  echo 'experimental-features = nix-command flakes fetch-tree' >> /etc/nix/nix.conf
+echo "    experimental-features: $(nix config show experimental-features 2>/dev/null || echo '?')"
+
+# --- 4. Fill the toolchain gaps from nixpkgs (idempotent) -------------------
+#    Nix ecosystem: direnv (+ nix-direnv), just, nushell.
+#    Rust dev components the base rustc/cargo image omits: clippy, rustfmt,
+#    rust-analyzer, cargo-edit. Python's base stack (uv/ruff/poetry/pytest/...)
+#    is already complete; per-project pins come from each repo's own
+#    `nix develop -c`. All substitute from cache.nixos.org, never github.
 nix profile install \
   nixpkgs#direnv \
   nixpkgs#nix-direnv \
@@ -82,20 +71,26 @@ nix profile install \
   nixpkgs#rust-analyzer \
   nixpkgs#clippy \
   nixpkgs#rustfmt \
-  nixpkgs#cargo-edit || true
-
-# Wire nix-direnv so any repo's `use flake` .envrc resolves quickly.
+  nixpkgs#cargo-edit 2>/dev/null || true
 install -d -m 0755 "$HOME/.config/direnv"
 if ! grep -q nix-direnv "$HOME/.config/direnv/direnvrc" 2>/dev/null; then
   echo 'source "$HOME/.nix-profile/share/nix-direnv/direnvrc"' \
     >> "$HOME/.config/direnv/direnvrc"
 fi
-
-# ---------------------------------------------------------------------------
-# 5. Put Nix + the profile tools on the default PATH (non-login shell safe).
-# ---------------------------------------------------------------------------
 ln -sf "$HOME"/.nix-profile/bin/* /usr/local/bin/
 
-# bumble is repo-agnostic, so there is no devShell to pre-warm here. In a
-# session, run `nix develop -c <cmd>` in a flake project to get that project's
-# exact toolchain; the store it builds is cached for the life of the session.
+# --- 5. Do not auto-load a devShell -----------------------------------------
+#    If the cloned repo has an .envrc (`use flake`), revoke any stale allow so
+#    a devShell with unauthorized github inputs cannot 403 on cd. Opt in per
+#    project with `direnv allow` once its inputs are reachable.
+if command -v direnv >/dev/null 2>&1 && [ -f .envrc ]; then
+  direnv deny . 2>/dev/null || direnv revoke . 2>/dev/null || true
+  echo "    .envrc DENIED -> devShell will not auto-load on cd"
+fi
+
+# --- 6. Warm flake metadata if a flake is present (safe) --------------------
+if [ -f flake.nix ]; then
+  nix flake metadata >/dev/null 2>&1 || echo "    (flake metadata warm skipped)"
+fi
+
+echo "==> bumble nix setup complete: nix + rust/python/nushell ready; no devShell auto-load"

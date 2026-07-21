@@ -8,41 +8,52 @@ Two environments:
 
 | Environment | Purpose | Setup script |
 | :---------- | :------ | :----------- |
-| **buzz**   | `gigpkgs` + general Nix / Rust work. Pre-warms the gigpkgs devShell. | [`docs/cloud/buzz-setup.sh`](cloud/buzz-setup.sh) |
+| **buzz**   | `gigpkgs` + general Nix / Rust work. | [`docs/cloud/buzz-setup.sh`](cloud/buzz-setup.sh) |
 | **bumble** | Repo-agnostic polyglot runner: Nix + Rust + Python + Nushell. | [`docs/cloud/bumble-setup.sh`](cloud/bumble-setup.sh) |
 
-The scripts are kept in-repo as the source of truth. To apply them you copy the
-script text into the environment's **Setup script** field in the web UI — cloud
-environment config (setup script, env vars, network access) lives in the
-Anthropic account, not in the repo, so it can't be auto-injected from here.
+Both make `nix` fully usable for **build / run / eval / flake** operations. The
+flake **devShell is intentionally not auto-loaded** — see
+[The devShell & the GitHub proxy](#the-devshell--the-github-proxy) for why.
+
+The scripts are the source of truth, kept in-repo. To apply them you **paste
+the script text into the environment's "Setup script" field** in the web UI —
+cloud environment config (setup script, env vars, network access) lives in the
+Anthropic account, not in the repo, so editing these files does not change a
+live environment until you re-paste.
+
+> **Environment config applies at session start, not to running sessions.**
+> After editing an environment, start a *fresh* session to pick up the change.
+> Editing the setup script also invalidates the environment cache (below), so
+> the script re-runs from the bare base image on the next new session.
 
 ## How a cloud environment is configured
 
 Each session runs in a fresh, isolated Anthropic-managed VM with the repo
-cloned. An *environment* carries three configurable things, all edited from
+cloned. An *environment* has three configurable knobs, all edited at
 `claude.ai/code` (environment selector → hover → settings icon; or **Add
 environment**):
 
-1. **Network access** — `None` / `Trusted` / `Full` / `Custom`. Default is
-   `Trusted` (a fixed allowlist of package registries + GitHub + cloud SDKs).
+1. **Network access** — `None` / `Trusted` / `Full` / `Custom`.
 2. **Environment variables** — `.env` format, one `KEY=value` per line, no
-   quotes. No secrets store yet, so treat them as visible to anyone who can
-   edit the environment.
-3. **Setup script** — a Bash script that runs **as root on Ubuntu 24.04**,
-   once, before Claude Code launches.
+   quotes. No secrets store yet: treat them as visible to anyone who can edit
+   the environment.
+3. **Setup script** — Bash, runs **as root on Ubuntu 24.04**, once, before
+   Claude Code launches.
 
-### Caching (why the setup script is the right place for Nix)
+### Caching — and why the install must be "install-if-missing"
 
 After the setup script finishes, Anthropic snapshots the filesystem and reuses
-that snapshot for later sessions — the script is then skipped. So the `/nix`
-store that our script builds (Nix itself, flake inputs, pre-warmed devShell
-packages) is baked into the snapshot and present at the start of every new
-session. Files persist; running processes do not. Cache rebuilds when you
-change the setup script or allowed hosts, or after ~7 days.
+it for later sessions, skipping the script. So the `/nix` store our script
+builds is baked into the snapshot and present at the start of later sessions.
+The cache rebuilds (script re-runs on the bare base image) when you **edit the
+setup script**, change allowed hosts, or after ~7 days.
 
-Keep the script under ~5 minutes so the cache can build. Ours stays well under
-that; the gigpkgs devShell pre-warm in `buzz` is bounded by `timeout 300 … ||
-true`, so it can never block session start (a partial warm is still cached).
+This is why step 1 of each script is **install-if-missing**
+(`if ! command -v nix …; then install; fi`), not a bare
+`command -v nix || exit 1` assert. Nix appears "already installed" only because
+a prior run cached it — the base image does **not** ship Nix. An assert-only
+script hard-fails on every cache rebuild; install-if-missing is a no-op on a
+warm cache and a correct install on a cold one.
 
 ### What the base image already provides
 
@@ -54,99 +65,108 @@ Do **not** reinstall these — the cloud image ships them:
 - Node (20/21/22 via nvm), Go, Java, Ruby, PHP, C/C++, Docker, PostgreSQL 16,
   Redis 7, plus `git`, `jq`, `yq`, `ripgrep`, `tmux`.
 
-**Missing, and what our scripts add:** Nix, flakes, `direnv` / `nix-direnv`,
-and Nushell.
+**Not shipped, and added by our scripts:** Nix, flakes, `direnv` /
+`nix-direnv`, Nushell (and for `bumble`, the Rust dev components).
 
 ## Network access
 
-`Trusted` is sufficient for both environments — **no `Custom` allowlist is
-needed**. The default allowlist already includes everything the scripts and
-flakes reach:
+`Trusted` is sufficient to **install and use Nix**: the default allowlist
+already covers everything the scripts and non-devShell flake operations reach:
 
-- `*.nixos.org` → `cache.nixos.org`, `releases.nixos.org`, `channels.nixos.org`
-  (Nix binary cache + channels, and the **installer**, see the gotcha below).
-- `crates.io`, `static.crates.io`, `index.crates.io` (Rust).
-- `pypi.org`, `files.pythonhosted.org` (Python).
-- `github.com` + `codeload.github.com` + `raw.githubusercontent.com` (flake
-  inputs: `nixos-unstable`, `nixos-26.05`, `home-manager`, `git-hooks.nix`,
-  `fupdate`).
+- `*.nixos.org` → `releases.nixos.org` (the pinned installer + tarball) and
+  `cache.nixos.org` (the binary cache). Note the wildcard is subdomains only —
+  see [the apex gotcha](#gotcha-the-bare-nixosorg-apex-is-blocked).
+- `crates.io` / `pypi.org` for Rust / Python.
 
-Use **Custom** (with *"include default package managers"* checked) only if you
-add a personal binary cache — e.g. a Cachix cache — which would need
-`*.cachix.org` and `cachix.org` added to the allowlist. The current
-`flake.nix` declares no extra substituter, so `Trusted` is enough today.
+You may run buzz on `Full` or `Custom` if you like, but **a higher network
+level does not fix the devShell** — that is gated by a different proxy (below),
+not the security allowlist.
 
 ### Gotcha: the bare `nixos.org` apex is blocked
 
-The default allowlist entry is `*.nixos.org`, and that wildcard matches
-**subdomains only**, not the apex `nixos.org`. The standard installer one-liner
-`curl -L https://nixos.org/nix/install` therefore fails at the egress proxy
-with `curl: (22) ... 403` / `CONNECT tunnel failed, response 403`, which then
-cascades into `/root/.nix-profile/etc/profile.d/nix.sh: No such file or
-directory` because Nix never got installed.
+The default allowlist entry `*.nixos.org` matches **subdomains only**, not the
+apex `nixos.org`. So `curl -L https://nixos.org/nix/install` 403s at the egress
+proxy. The scripts fetch a **pinned** installer from
+`releases.nixos.org/nix/nix-<version>/install` instead (a subdomain); its
+tarball is on `releases.nixos.org` and Nix substitutes from `cache.nixos.org`,
+so nothing touches the blocked apex. Bump `NIX_VERSION` to upgrade (browse
+<https://releases.nixos.org/?prefix=nix/>).
 
-The setup scripts avoid this by fetching a **pinned** installer straight from
-`releases.nixos.org/nix/nix-<version>/install` (a subdomain, allowed). That
-installer downloads its tarball from `releases.nixos.org` and Nix then pulls
-from `cache.nixos.org` — all subdomains, none touch the blocked apex. Bump the
-`NIX_VERSION` value at the top of the install block (or set a `NIX_VERSION`
-environment variable) to upgrade; find current versions by browsing
-<https://releases.nixos.org/?prefix=nix/>.
+## The devShell & the GitHub proxy
 
-(If you would rather run the vanilla one-liner, the alternative is to switch
-the environment to **Custom** network access, keep the defaults, and add
-`nixos.org` to the allowlist. The pinned-installer approach keeps `Trusted`
-working with zero network changes, so the scripts use that.)
+**The single most important limitation.** `nix develop` (and direnv
+`use flake`) does **not** work in a cloud session scoped to `gigpkgs`, and no
+network setting fixes it. The scripts therefore keep the devShell *off* and
+rely on plain `nix build/run/eval/flake`, which need only the local flake and
+`cache.nixos.org`.
 
-### Gotcha: personal `github:` flake inputs (the `fupdate` case)
+### Root cause (verified 2026-07-21)
 
-The GitHub proxy limits archive / codeload downloads to the repos **attached to
-the session**, independent of network level and independent of public/private
-status. Verified from a session scoped to `gigpkgs`:
+The `gigpkgs` devShell's `shellHook` runs `self.pre-commit-check`, which comes
+from the `pre-commit-hooks` flake input, `github:cachix/git-hooks.nix`. Entering
+the devShell forces Nix to fetch that input's tarball from `github.com`.
 
-| Request | Result |
-| :------ | :----- |
-| `github.com/gignsky/fupdate/archive/<rev>.tar.gz` (unattached) | `403` |
-| `codeload.github.com/gignsky/fupdate/tar.gz/<rev>` | `403` |
-| `github.com/NixOS/nix/archive/...` (public, unattached) | `403` |
-| `raw.githubusercontent.com/gignsky/fupdate/<rev>/flake.nix` | `200` |
+There are **two independent proxies** in a cloud session:
 
-`gigpkgs`'s `flake.nix` has `fupdate.url = "github:gignsky/fupdate"`. Common
-inputs like `nixpkgs` / `home-manager` resolve because their **source store
-paths are substituted from `cache.nixos.org`**, so no GitHub archive fetch
-happens. `fupdate` is in no binary cache, so Nix falls back to the GitHub
-archive endpoint — which the proxy `403`s. Result: `nix develop` (and the
-buzz pre-warm) fail on the `fupdate` input in a `gigpkgs`-only session.
+| Proxy | Governs | Blocked request looks like |
+| :---- | :------ | :------------------------- |
+| **Security proxy** | all outbound HTTPS, per the network **access level** | `example.com` → `curl: (56) CONNECT tunnel failed, response 403` |
+| **GitHub proxy** | all `github.com` traffic, scoped to the session's **authorized repos** | app-level `HTTP 403` with body `{"message":"GitHub access to this repository is not enabled for this session. Use add_repo to request access."}` |
 
-The pre-warm is `|| true`, so this never blocks session start — but to make
-`nix develop` actually work in-session you need one of:
+`github:cachix/git-hooks.nix` is not one of the session's authorized repos
+(only `gignsky/gigpkgs` is), so the GitHub proxy returns a **403**. This is
+**independent of the network access level** — adding `github.com` to a `Custom`
+allowlist changes only the *security* proxy and does nothing here. Verified: an
+*unauthorized* repo's archive 403s whether public (`NixOS/nix`) or personal
+(`gignsky/fupdate`, another such input); only the authorized `gigpkgs`
+resolves; `raw.githubusercontent.com/<public repo>/…` (individual files) is not
+gated. Common inputs like `nixpkgs` resolve only because their **source is
+substituted from `cache.nixos.org`**, so no GitHub fetch happens.
 
-1. **Attach `fupdate` (and any other personal `github:` inputs) to the
-   session** — this is exactly what the `403` body means by *"Use add_repo to
-   request access"*. Then Nix's archive fetch is allowed.
-2. **Push `fupdate` (and `gigpkgs`) to a binary cache** (e.g. a Cachix cache)
-   and add it as a substituter: `nix.conf` `extra-substituters` +
-   `extra-trusted-public-keys`, plus **Custom** network access adding
-   `*.cachix.org` / `cachix.org`. Then the source is substituted like nixpkgs
-   and no GitHub archive fetch is needed. This is the most robust CI answer.
-3. **Make `fupdate` optional in the default devShell** so `nix develop` opens
-   without it, treating it as a nice-to-have rather than a hard input.
+There is **no environment setting that pre-authorizes extra GitHub repos**.
+`add_repo` is the only mechanism and it is **interactive** — it cannot be
+scripted from the setup script.
+
+### What works without the devShell (verified)
+
+```text
+nix --version
+nix eval  .#packages.x86_64-linux.gignews.name   -> gignews-0.1.2
+nix build .#gignews                              -> /nix/store/…-gignews-0.1.2
+nix run   .#gignews -- list                      -> runs
+nix flake metadata / nix flake show              -> ok
+substitution from cache.nixos.org                -> ok
+```
+
+### How to enable the devShell later, if ever needed
+
+Pick one:
+
+1. **Authorize the input's repo in-session**: run `add_repo cachix/git-hooks.nix`,
+   then `direnv allow` (or `nix develop`). Interactive; scoped to that session;
+   repeat for any other unauthorized `github:` input.
+2. **Guard the shellHook for cloud sessions**: change `flake.nix` so the
+   `pre-commit-check` shellHook is skipped when `CLAUDE_CODE_REMOTE=true`,
+   removing the `github.com` dependency from the devShell in cloud sessions
+   entirely. This is a permanent, repo-level fix (trade-off: pre-commit hooks
+   are not installed in cloud devShells).
+
+The scripts also actively run `direnv deny`/`revoke` on the repo `.envrc`,
+because a stale `direnv allow` persists across sessions — passively
+not-allowing is unreliable, so we revoke it.
 
 ## TLS / proxy — already handled
 
-All outbound HTTPS goes through the session's egress proxy, and the
-environment already pre-sets `HTTPS_PROXY`, `NIX_SSL_CERT_FILE`, `SSL_CERT_FILE`
-and friends, with the proxy CA already in the system trust store. That is why
-the scripts install Nix **single-user / daemonless** (`--no-daemon`): builds
-run as root and inherit those variables, so substituter fetches succeed. A
-`nix-daemon` would run in its own environment without them and its downloads
-would fail behind the proxy.
+Outbound HTTPS goes through the egress proxy, and the environment pre-sets
+`HTTPS_PROXY`, `NIX_SSL_CERT_FILE`, `SSL_CERT_FILE` etc., with the proxy CA in
+the system trust store. The scripts install Nix **single-user / daemonless**
+(`--no-daemon`) so builds run as root and inherit those variables; a
+`nix-daemon` would run without them and its fetches would fail.
 
 ## Environment variables
 
-None are required — `/etc/nix/nix.conf` (written by the setup script) carries
-the flakes settings, and TLS/proxy vars are pre-set. Optional niceties, in
-`.env` format:
+None required — `/etc/nix/nix.conf` (written by the setup script) carries the
+flakes settings, and TLS/proxy vars are pre-set. Optional, in `.env` format:
 
 ```text
 DIRENV_LOG_FORMAT=
@@ -156,32 +176,29 @@ DIRENV_LOG_FORMAT=
 
 ## Using the tools in a session
 
-The setup script symlinks the Nix profile into `/usr/local/bin`, so `nix`,
-`direnv`, `just` and `nu` are on `PATH` for Claude's (non-login) shells.
+The scripts symlink the Nix profile into `/usr/local/bin`, so `nix`, `direnv`,
+`just`, `nu` (and on `bumble` `clippy`/`rustfmt`/`rust-analyzer`) are on `PATH`
+for Claude's non-login shells.
 
-- **gigpkgs / any flake project:** run devShell tools through the flake so you
-  get the exact pinned versions and the repo's custom packages:
+- **gigpkgs:** use `nix build/run/eval/flake` directly (devShell not needed):
 
   ```bash
-  nix develop -c just            # the repo's justfile menu
-  nix develop -c nixfmt .        # formatter from the devShell
-  nix develop -c statix check    # linter from the devShell
+  nix build .#gignews
+  nix run   .#locker -- --help
+  nix eval  .#packages.x86_64-linux.gignews.name
   ```
 
-  On `buzz` this devShell is pre-warmed into the snapshot, so it activates
-  fast.
-
-- **Ad-hoc / repo-agnostic (bumble):** `nu`, `cargo`, `rustc`, `clippy`,
-  `cargo fmt`, `rust-analyzer`, and the base Python stack are directly on
-  `PATH`; per-project pins come from each repo's own `nix develop -c`.
+- **Repo-agnostic (bumble):** `nu`, `cargo`, `clippy`, `cargo fmt`,
+  `rust-analyzer`, and the base Python stack are on `PATH`; per-project pins
+  come from each repo's own flake (once its inputs are authorized).
 
 ## Applying changes
 
 1. Open `claude.ai/code`, click the environment selector.
-2. **buzz:** hover → settings icon → paste `docs/cloud/buzz-setup.sh` into
-   *Setup script*, confirm network access is `Trusted`, save.
+2. **buzz:** hover → settings → paste `docs/cloud/buzz-setup.sh` into
+   *Setup script*, save.
 3. **bumble:** **Add environment**, name it `bumble`, paste
-   `docs/cloud/bumble-setup.sh`, set network access `Trusted`, save.
-4. Start a fresh session in each so the setup script runs and the cache builds.
-   Ask Claude to run `check-tools`, `nix --version`, and `nu --version` to
-   confirm.
+   `docs/cloud/bumble-setup.sh`, save.
+4. Start a **fresh** session in each (editing the script rebuilds the cache, so
+   the first new session re-runs the install). Confirm with `nix --version`,
+   `nix build .#gignews`, and `nu --version`.
