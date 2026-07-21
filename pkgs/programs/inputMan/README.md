@@ -49,7 +49,7 @@ inputman remove gigvim --no-commit
   - Bare `-f` / `--follows` → `<input>.inputs.<self>.follows = "";` where
     `<self>` is `basename $(pwd)` (i.e., the current flake's name).
 - `--no-info` — skip metadata probe output.
-- `--no-branch` — skip creating `add-input/<name>` from `origin/main`.
+- `--no-branch` — skip creating `add-input/<name>` from `origin/master`.
 - `--no-modules` — skip module discovery for this install.
 - `--yes`, `-y` — accept prompts (default aliases) and commit without asking.
 - `--no-commit`, `-n` — stage only.

@@ -40,7 +40,7 @@ Install options:
                          where <self> is derived from the current flake name.
                          Repeatable.
   --no-info              Skip flake metadata probe output
-  --no-branch            Skip creating add-input/<name> branch from origin/main
+  --no-branch            Skip creating add-input/<name> branch from origin/master
   --no-modules           Skip module auto-discovery
   --yes, -y              Accept prompts and commit without asking
   --no-commit, -n        Stage changes but do not commit
@@ -668,16 +668,16 @@ create_feature_branch() {
     die "Branch '${branch}' already exists"
   fi
 
-  if ! git show-ref --verify --quiet refs/remotes/origin/main; then
+  if ! git show-ref --verify --quiet refs/remotes/origin/master; then
     if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
       git fetch --unshallow origin >/dev/null 2>&1 || die "Failed to fetch full history from origin"
     fi
-    git fetch origin main:refs/remotes/origin/main >/dev/null 2>&1 ||
-      die "Failed to fetch origin/main"
+    git fetch origin master:refs/remotes/origin/master >/dev/null 2>&1 ||
+      die "Failed to fetch origin/master"
   fi
 
-  git checkout -b "$branch" refs/remotes/origin/main >/dev/null 2>&1 ||
-    die "Failed to create branch '${branch}' from origin/main"
+  git checkout -b "$branch" refs/remotes/origin/master >/dev/null 2>&1 ||
+    die "Failed to create branch '${branch}' from origin/master"
   ok "Created and switched to branch '${branch}'"
 }
 
