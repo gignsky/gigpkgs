@@ -40,7 +40,7 @@
     "home-manager": {
       "inputs": {
         "nixpkgs": [
-          "nixos-stable"
+          "nixos-2605"
         ]
       },
       "locked": {
