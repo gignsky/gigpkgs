@@ -1,9 +1,16 @@
-# Derive the gigos-* channel branches from the trunk.
+# Derive the gigos-* / gigpkgs-* channel branches from the trunk.
 #
-# Each channel branch is the trunk + ONE file (channel.nix). This workflow, on
-# every push to the trunk, gates on a bare-minimum `nix flake check`, then for
-# each channel overwrites channel.nix and force-pushes to gigos-<channel>.
-# No source drift, no merge maintenance — the branches are pure projections.
+# Each channel branch is the trunk with ONE marker file rewritten (channel.nix)
+# and the lock refreshed to match it (flake.lock). This workflow, on every push
+# to the trunk, gates on a bare-minimum `nix flake check`, then for each channel
+# overwrites channel.nix, relocks, and force-pushes to the derived branch. No
+# source drift, no merge maintenance — the branches are pure projections.
+#
+# Two branch families are derived from the same channels so downstream consumers
+# can pin whichever name they prefer:
+#   gigos-<channel>    (legacy name)
+#   gigpkgs-<channel>  (repo-matching name)
+# Both in a family point at the same base nixpkgs channel.
 #
 # Triggers on both `main` and `master` so the planned trunk rename
 # (main -> master, per gigpkgs#14) needs no flag-day change here.
@@ -53,12 +60,21 @@ jobs:
             channel: nixos-unstable
           - branch: gigos-26.05
             channel: nixos-2605
-          # gigos-stable is NOT a plain derive — it is a gated promotion
-          # (Hydra, gigpkgs#17). Intentionally excluded from this matrix.
+          - branch: gigpkgs-unstable
+            channel: nixos-unstable
+          - branch: gigpkgs-26.05
+            channel: nixos-2605
+          # gigos-stable / gigpkgs-stable are NOT plain derives — stable is a
+          # gated promotion (Hydra, gigpkgs#17). Intentionally excluded here.
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
       - name: Project trunk onto ${{ matrix.branch }} (channel=${{ matrix.channel }})
         run: |
@@ -73,6 +89,13 @@ jobs:
             printf '"%s"\n' "${{ matrix.channel }}"
           } > channel.nix
 
-          git add channel.nix
+          # Relock so the derived branch carries a flake.lock consistent with its
+          # channel marker. `nix flake lock` only adds missing or changed entries
+          # (e.g. flake=false roll-flow siblings the trunk lock may not yet
+          # carry); when the trunk lock is already complete this is a no-op, so
+          # the projection stays a pure marker delta.
+          nix flake lock --accept-flake-config
+
+          git add channel.nix flake.lock
           git commit -m "derive(${{ matrix.branch }}): channel=${{ matrix.channel }} @ ${{ github.sha }}"
           git push --force-with-lease origin "HEAD:refs/heads/${{ matrix.branch }}"
