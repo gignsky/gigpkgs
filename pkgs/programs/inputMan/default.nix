@@ -397,13 +397,18 @@ pkg
           }
           MAP
 
-          # Freeze to an explicit tag (no flake.lock needed for --tag path); use
-          # the internal patchers directly since `freeze` also invokes locker/nix.
-          inputman __patch-flake-add roll-flow-frozen-v0-2-99 github:gignsky/roll-flow/v0.2.99 nixpkgs=nixpkgs
+          # Freeze roll-flow (a flake = false source) to a committed tag: the
+          # frozen sibling must be flake = false with NO follows, and the channel
+          # entry must repoint. Exercise the internal patchers directly since
+          # `freeze` itself also invokes locker/nix (unavailable in the sandbox).
+          inputman __patch-flake-add-nonflake roll-flow-frozen-v0-2-99 github:gignsky/roll-flow/v0.2.99
           inputman __patch-channel-map-set roll-flow nixos-2605 roll-flow-frozen-v0-2-99
 
           grep -q 'roll-flow-frozen-v0-2-99.url = "github:gignsky/roll-flow/v0.2.99";' flake.nix
-          grep -q 'roll-flow-frozen-v0-2-99.inputs.nixpkgs.follows = "nixpkgs";' flake.nix
+          grep -q 'roll-flow-frozen-v0-2-99.flake = false;' flake.nix
+          if grep -q 'roll-flow-frozen-v0-2-99.inputs' flake.nix; then
+            echo "flake=false frozen input must not carry follows"; exit 1
+          fi
           grep -q '"nixos-2605" = "roll-flow-frozen-v0-2-99";' channel-sources.nix
 
           echo "freeze_patch verified" > $out

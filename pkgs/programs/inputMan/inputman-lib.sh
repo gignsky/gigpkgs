@@ -250,13 +250,18 @@ patch_flake_add() {
     my $entry_indent = ($indent // "") . "  ";
 
     my @insert_lines = (qq{$entry_indent$n.url = "$u";});
-    for my $raw (split /\n/, $follows_raw) {
-      next if $raw eq q{};
-      my ($k, $v) = split /=/, $raw, 2;
-      $v = "" unless defined $v;
-      my @segs = split /\./, $k;
-      my $chain = join('.inputs.', @segs);
-      push @insert_lines, qq{$entry_indent$n.inputs.$chain.follows = "$v";};
+    if ($ENV{INPUT_FLAKE_FALSE}) {
+      # `flake = false` source pins carry no inputs, so follows are invalid.
+      push @insert_lines, qq{$entry_indent$n.flake = false;};
+    } else {
+      for my $raw (split /\n/, $follows_raw) {
+        next if $raw eq q{};
+        my ($k, $v) = split /=/, $raw, 2;
+        $v = "" unless defined $v;
+        my @segs = split /\./, $k;
+        my $chain = join('.inputs.', @segs);
+        push @insert_lines, qq{$entry_indent$n.inputs.$chain.follows = "$v";};
+      }
     }
 
     my $insert = "\n" . join("\n", @insert_lines) . "\n";
@@ -266,7 +271,7 @@ PERL
 
   local err_file
   err_file=$(mktemp)
-  if ! INPUT_NAME="$name" INPUT_URL="$url" INPUT_FOLLOWS="$follows_newline" perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
+  if ! INPUT_NAME="$name" INPUT_URL="$url" INPUT_FOLLOWS="$follows_newline" INPUT_FLAKE_FALSE="${INPUT_FLAKE_FALSE:-}" perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
     local err
     err=$(cat "$err_file")
     rm -f "$err_file"
@@ -274,6 +279,12 @@ PERL
   fi
 
   rm -f "$err_file"
+}
+
+# Add a `flake = false` source input (url + `flake = false;`, no follows).
+patch_flake_add_nonflake() {
+  local name="$1" url="$2"
+  INPUT_FLAKE_FALSE=1 patch_flake_add "$name" "$url"
 }
 
 patch_flake_remove() {
@@ -618,6 +629,14 @@ locked_input_rev() {
   local name="$1"
   [[ -f flake.lock ]] || return 1
   jq -r --arg n "$name" '.nodes[$n].locked.rev // empty' flake.lock 2>/dev/null
+}
+
+# Print "true" if input <name> is a `flake = false` source pin (per flake.lock),
+# else nothing. Used to mirror a moving input's flake-ness when freezing.
+locked_input_is_nonflake() {
+  local name="$1"
+  [[ -f flake.lock ]] || return 1
+  jq -r --arg n "$name" 'if (.nodes[$n].flake == false) then "true" else empty end' flake.lock 2>/dev/null
 }
 
 # Print the immutable github base "github:OWNER/REPO" for a locked input.

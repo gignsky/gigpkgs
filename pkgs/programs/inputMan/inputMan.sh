@@ -51,6 +51,7 @@ group-install options (channel-aware multi-version pins):
   --source <ch>=<input-name>=<url>   Sibling input for channel <ch>. Repeatable.
   --default <ch>                     Channel whose input backs the `default` map key.
   --follows, -f <spec>               Follows for every sibling (default nixpkgs=nixpkgs).
+  --flake-false                      Add siblings as `flake = false` source pins (no follows).
   --no-branch / --yes,-y / --no-commit,-n
 
 freeze options:
@@ -727,7 +728,7 @@ cmd_remove() {
 # ── Channel-aware multi-version pins ────────────────────────────────────────
 
 cmd_group_install() {
-  local program="" default_ch="" auto_commit="" no_commit="" no_branch=""
+  local program="" default_ch="" auto_commit="" no_commit="" no_branch="" flake_false=""
   local -a sources=() follows_pairs=()
 
   while [[ $# -gt 0 ]]; do
@@ -740,6 +741,10 @@ cmd_group_install() {
     --default)
       default_ch="$2"
       shift 2
+      ;;
+    --flake-false)
+      flake_false=1
+      shift
       ;;
     --follows | -f)
       validate_follows_pair "$2"
@@ -789,6 +794,9 @@ cmd_group_install() {
 
     if grep -qP "^\s+${input_name}[. =]" flake.nix; then
       warn "Input '${input_name}' already in flake.nix; mapping channel only."
+    elif [[ -n "$flake_false" ]]; then
+      patch_flake_add_nonflake "$input_name" "$url"
+      ok "Added input '${input_name}' (flake = false) -> ${url}"
     else
       patch_flake_add "$input_name" "$url" "${follows_pairs[@]}"
       ok "Added input '${input_name}' -> ${url}"
@@ -892,8 +900,16 @@ cmd_freeze() {
   slug=$(slug_version "$version")
   frozen_name="${program}-frozen-${slug}"
 
+  # Mirror the moving input's flake-ness: a `flake = false` source cannot carry
+  # follows, so the frozen sibling must be flake=false too (and vice versa).
+  local nonflake
+  nonflake=$(locked_input_is_nonflake "$from" 2>/dev/null || true)
+
   if grep -qP "^\s+${frozen_name}[. =]" flake.nix; then
     warn "Frozen input '${frozen_name}' already exists in flake.nix; repointing channel only."
+  elif [[ -n "$nonflake" ]]; then
+    patch_flake_add_nonflake "$frozen_name" "$url"
+    ok "Added frozen input '${frozen_name}' (flake = false) -> ${url}"
   else
     patch_flake_add "$frozen_name" "$url" "nixpkgs=nixpkgs"
     ok "Added frozen input '${frozen_name}' -> ${url}"
@@ -967,6 +983,17 @@ __patch-flake-remove)
   shift
   [[ $# -eq 1 ]] || die "Usage: inputman __patch-flake-remove <name>"
   patch_flake_remove "$1"
+  ;;
+__patch-flake-add-nonflake)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __patch-flake-add-nonflake <name> <url>"
+  patch_flake_add_nonflake "$1" "$2"
+  ;;
+__locked-input-is-nonflake)
+  shift
+  [[ $# -eq 1 ]] || die "Usage: inputman __locked-input-is-nonflake <name>"
+  locked_input_is_nonflake "$1"
+  echo
   ;;
 __parse-packages-spec)
   shift
