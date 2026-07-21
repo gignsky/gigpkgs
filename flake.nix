@@ -25,7 +25,9 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-  };
+  
+    fupdate.url = "github:gignsky/fupdate";
+};
 
   outputs =
     {
