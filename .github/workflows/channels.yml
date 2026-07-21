@@ -64,9 +64,9 @@ jobs:
           - branch: gigos-26.05
             channel: nixos-2605
           - branch: gigpkgs-unstable
-            channel: nixos-unstable
+            channel: nixpkgs-unstable
           - branch: gigpkgs-26.05
-            channel: nixos-2605
+            channel: nixpkgs-2605
           # gigos-stable / gigpkgs-stable are NOT plain derives — stable is a
           # gated promotion (Hydra, gigpkgs#17). Intentionally excluded here.
     steps:
