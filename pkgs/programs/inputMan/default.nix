@@ -2,7 +2,7 @@
 let
   pkg = pkgs.stdenv.mkDerivation {
     pname = "inputman";
-    version = "0.2.0";
+    version = "0.3.0";
 
     src = ./.;
 
@@ -21,6 +21,7 @@ let
             pkgs.jq
             pkgs.perl
             pkgs.pre-commit
+            pkgs.fzf
           ]
         }
     '';
@@ -48,13 +49,15 @@ pkg
           inputman --help > help_output
 
           grep -q "install <url>" help_output
-          grep -q "update <name>" help_output
+          grep -q "update <name|all|\*>" help_output
           grep -q "remove <name>" help_output
+          grep -q "rename" help_output
           grep -q -- "--follows" help_output
           grep -q -- "--packages, -p" help_output
           grep -q -- "--no-info" help_output
           grep -q -- "--no-branch" help_output
           grep -q -- "--no-modules" help_output
+          grep -q -- "--no-review" help_output
           grep -q -- "--no-commit" help_output
 
           echo "Help output verified" > $out
@@ -241,6 +244,138 @@ pkg
           echo "nested follows remove verified" > $out
         '';
 
+    mapping-table =
+      pkgs.runCommand "inputman-mapping-table-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+          mkdir -p pkgs/inputs modules/home/inputs
+
+          cat > pkgs/inputs/foo.nix <<'NIX'
+          # gigpkgs inputMan: managed input
+          { inputs, system }:
+          {
+            foo = inputs.foo.packages.''${system}.default;
+          }
+          NIX
+
+          cat > modules/home/inputs/foo.nix <<'NIX'
+          # gigpkgs inputMan: managed homeModules aggregator
+          { inputs }:
+          {
+            foo = inputs.foo.homeModules.default;
+          }
+          NIX
+
+          actual=$(inputman __list-managed-inputs)
+          test "$actual" = "foo"
+
+          inputman __mapping-table > table
+          grep -q "foo.*pkg.*default.*foo" table
+          grep -q "foo.*home.*default.*foo" table
+
+          echo "mapping table verified" > $out
+        '';
+
+    apply-alias-rename =
+      pkgs.runCommand "inputman-apply-alias-rename-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+          mkdir -p pkgs/inputs
+
+          cat > pkgs/inputs/foo.nix <<'NIX'
+          # gigpkgs inputMan: managed input
+          { inputs, system }:
+          {
+            foo = inputs.foo.packages.''${system}.default;
+          }
+          NIX
+
+          inputman __apply-alias-rename pkg foo default foo foo-renamed
+
+          grep -q 'foo-renamed = inputs.foo.packages.''${system}.default;' pkgs/inputs/foo.nix
+          grep -q '# gigpkgs inputMan: managed input' pkgs/inputs/foo.nix
+          grep -q '{ inputs, system }:' pkgs/inputs/foo.nix
+
+          echo "apply_alias_rename verified" > $out
+        '';
+
+    diff-locked =
+      pkgs.runCommand "inputman-diff-locked-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          echo '{"nodes":{"x":{"locked":{"rev":"abc"}}}}' > a.json
+          echo '{"nodes":{"x":{"locked":{"rev":"abc"}}}}' > b.json
+          echo '{"nodes":{"x":{"locked":{"rev":"def"}}}}' > c.json
+
+          test "$(inputman __diff-locked a.json b.json)" = "unchanged"
+          test "$(inputman __diff-locked a.json c.json)" = "changed"
+
+          echo "diff_locked verified" > $out
+        '';
+
+    rename-noninteractive =
+      pkgs.runCommand "inputman-rename-noninteractive-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+          mkdir -p pkgs/inputs news/entries
+          git init -q
+          git config user.email test@example.com
+          git config user.name test
+
+          cat > flake.nix <<'NIX'
+          { inputs = { }; outputs = { ... }: { }; }
+          NIX
+
+          cat > pkgs/inputs/foo.nix <<'NIX'
+          # gigpkgs inputMan: managed input
+          { inputs, system }:
+          {
+            foo = inputs.foo.packages.''${system}.default;
+          }
+          NIX
+
+          # No TTY in the build sandbox: must print the table and exit cleanly,
+          # never block on `read`.
+          timeout 10 inputman rename < /dev/null > output
+          grep -q "No alias renames applied" output
+          grep -q "INPUT" output
+
+          echo "non-interactive rename verified" > $out
+        '';
+
     self-name =
       pkgs.runCommand "inputman-self-name-test"
         {
@@ -282,6 +417,7 @@ pkg
           command -v git > /dev/null
           command -v jq > /dev/null
           command -v perl > /dev/null
+          command -v fzf > /dev/null
           echo "Runtime dependencies verified" > $out
         '';
 

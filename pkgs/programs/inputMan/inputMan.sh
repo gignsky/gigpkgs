@@ -20,10 +20,12 @@ usage() {
 Usage: inputman <command> [options]
 
 Commands:
-  install <url>    Add a flake input and expose its packages + modules
-  update <name>    Refresh a locked input; prompt for new packages/modules
-  remove <name>    Remove a flake input and its generated files
-  help             Show this help
+  install <url>       Add a flake input and expose its packages + modules
+  update <name|all|*> Refresh one (or every) locked input; prompt for new
+                       packages/modules; skips news/commit if nothing changed
+  remove <name>       Remove a flake input and its generated files
+  rename              Review/rename current input package+module aliases
+  help                Show this help
 
 Install options:
   --name <name>          Override the input name (default: inferred from URL)
@@ -42,15 +44,22 @@ Install options:
   --no-info              Skip flake metadata probe output
   --no-branch            Skip creating add-input/<name> branch from origin/master
   --no-modules           Skip module auto-discovery
+  --no-review            Skip the interactive alias-review step
   --yes, -y              Accept prompts and commit without asking
   --no-commit, -n        Stage changes but do not commit
 
 Update options:
   --no-modules           Skip module re-scan
+  --no-review            Skip the interactive alias-review step
   --yes, -y              Auto-include new packages/modules with default aliases; commit
   --no-commit, -n        Stage changes but do not commit
 
 Remove options:
+  --no-review            Skip the interactive alias-review step
+  --yes, -y              Commit without prompting
+  --no-commit, -n        Stage changes but do not commit
+
+Rename options:
   --yes, -y              Commit without prompting
   --no-commit, -n        Stage changes but do not commit
 
@@ -61,7 +70,9 @@ Examples:
   inputman install github:some/flake -f            # follow current gigpkgs
   inputman install github:gignsky/gigvim -p default=gigvim,nightly=gigvim-nightly
   inputman update gigvim -y
+  inputman update all -y
   inputman remove gigvim --no-commit
+  inputman rename
 EOF_USAGE
 }
 
@@ -437,6 +448,94 @@ current_module_pairs() {
   done <"$file"
 }
 
+# List basenames of all inputMan-managed inputs under pkgs/inputs/*.nix,
+# excluding the aggregator/helper files that aren't per-input.
+list_managed_inputs() {
+  local f base
+  shopt -s nullglob
+  for f in pkgs/inputs/*.nix; do
+    base="$(basename "$f" .nix)"
+    [[ "$base" == "default" || "$base" == "devShellPackages" ]] && continue
+    printf '%s\n' "$base"
+  done
+  shopt -u nullglob
+}
+
+# Build a TSV table of every managed input/package/module alias mapping:
+# name<TAB>kind<TAB>upstream<TAB>alias
+# kind is one of: pkg, home, nixos
+build_mapping_table() {
+  local name pair
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    while IFS= read -r pair; do
+      [[ -z "$pair" ]] && continue
+      printf '%s\tpkg\t%s\t%s\n' "$name" "${pair%%=*}" "${pair#*=}"
+    done < <(current_package_pairs "$name")
+    while IFS= read -r pair; do
+      [[ -z "$pair" ]] && continue
+      printf '%s\thome\t%s\t%s\n' "$name" "${pair%%=*}" "${pair#*=}"
+    done < <(current_module_pairs "$name" home)
+    while IFS= read -r pair; do
+      [[ -z "$pair" ]] && continue
+      printf '%s\tnixos\t%s\t%s\n' "$name" "${pair%%=*}" "${pair#*=}"
+    done < <(current_module_pairs "$name" nixos)
+  done < <(list_managed_inputs)
+}
+
+# Render a TSV mapping table (name, kind, upstream, alias) from stdin.
+render_mapping_table() {
+  printf '%-16s %-6s %-20s %s\n' "INPUT" "KIND" "UPSTREAM" "ALIAS"
+  local name kind upstream alias
+  while IFS=$'\t' read -r name kind upstream alias; do
+    [[ -z "$name" ]] && continue
+    printf '%-16s %-6s %-20s %s\n' "$name" "$kind" "$upstream" "$alias"
+  done
+}
+
+# Find the input/kind/upstream (TSV) owning a given alias in a mapping table
+# (TSV passed as the second argument), or nothing if unused.
+find_alias_owner() {
+  local alias="$1" table="$2"
+  awk -F'\t' -v a="$alias" '$4==a{print $1"\t"$2"\t"$3; exit}' <<<"$table"
+}
+
+# Rewrite exactly one alias line in a generated aggregator file. kind is one
+# of: pkg, home, nixos. Only the alias (LHS) token is touched.
+apply_alias_rename() {
+  local kind="$1" name="$2" upstream="$3" old_alias="$4" new_alias="$5"
+  local file attr
+  case "$kind" in
+  pkg)
+    file="pkgs/inputs/${name}.nix"
+    attr='packages.${system}'
+    ;;
+  home)
+    file="modules/home/inputs/${name}.nix"
+    attr="homeModules"
+    ;;
+  nixos)
+    file="modules/nixos/inputs/${name}.nix"
+    attr="nixosModules"
+    ;;
+  *) die "Unknown mapping kind '${kind}'" ;;
+  esac
+
+  [[ -f "$file" ]] || die "Cannot rename: ${file} not found"
+
+  RENAME_OLD="$old_alias" RENAME_NEW="$new_alias" RENAME_NAME="$name" \
+    RENAME_UPSTREAM="$upstream" RENAME_ATTR="$attr" \
+    perl -i -pe '
+      BEGIN {
+        $o = quotemeta($ENV{RENAME_OLD});
+        $n = quotemeta($ENV{RENAME_NAME});
+        $u = quotemeta($ENV{RENAME_UPSTREAM});
+        $a = quotemeta($ENV{RENAME_ATTR});
+      }
+      s/^(\s*)$o(\s*=\s*inputs\.$n\.$a\.$u;\s*)$/$1$ENV{RENAME_NEW}$2/;
+    ' "$file"
+}
+
 # Render a rescan-section header for `inputman update` output. Streams the
 # announcement + list of currently-exposed entries to stderr so the caller can
 # still capture command output.
@@ -586,6 +685,10 @@ write_news_entry() {
     headline="Removed flake input '${name}'"
     body="This input was removed from gigpkgs by inputMan."
     ;;
+  rename)
+    headline="Renamed input alias(es)"
+    body="Alias mappings under pkgs/inputs/ and modules/*/inputs/ were reviewed and renamed by inputMan."
+    ;;
   *)
     warn "Unknown news action '${action}'; skipping news entry."
     return 0
@@ -622,22 +725,30 @@ write_news_entry() {
   printf '%s' "$file"
 }
 
+# Set by finalize_commit to report its outcome back to the caller:
+# "none" | "staged" | "committed". The script runs in a single process (no
+# subshell), so a plain global assignment is visible to callers.
+LAST_COMMIT_RESULT=""
+
 finalize_commit() {
   local commit_message="$1" auto_commit="$2" no_commit="$3"
 
   if git diff --cached --quiet; then
     warn "No staged changes to commit."
+    LAST_COMMIT_RESULT="none"
     return
   fi
 
   if [[ -n "$no_commit" ]]; then
     warn "Changes staged but not committed (--no-commit)."
+    LAST_COMMIT_RESULT="staged"
     return
   fi
 
   if [[ -n "$auto_commit" ]]; then
     git commit -m "$commit_message" --no-verify
     ok "Committed."
+    LAST_COMMIT_RESULT="committed"
     return
   fi
 
@@ -646,9 +757,118 @@ finalize_commit() {
   if [[ -z "$answer" || "${answer,,}" == "y"* ]]; then
     git commit -m "$commit_message" --no-verify
     ok "Committed."
+    LAST_COMMIT_RESULT="committed"
   else
     warn "Changes staged but not committed."
+    LAST_COMMIT_RESULT="staged"
   fi
+}
+
+# Print a generated news entry's content back to the terminal, labeled with
+# whether the change it describes was committed or only staged. No-op if
+# news_file is empty (e.g. a no-op update that wrote nothing).
+print_news_entry() {
+  local news_file="$1"
+  [[ -z "$news_file" || ! -f "$news_file" ]] && return 0
+  case "$LAST_COMMIT_RESULT" in
+  committed) info "News entry (committed):" ;;
+  *) info "News entry (staged, not committed):" ;;
+  esac
+  cat "$news_file"
+}
+
+# Set by review_mapping_table when a rename was applied, so callers can decide
+# whether to write a "rename" news entry / extra commit.
+MAPPING_REVIEW_CHANGED=0
+MAPPING_REVIEW_LOG=""
+
+# Show the current input/package/module alias mapping table and, when
+# interactive, offer to rename entries before the caller commits. Silent
+# (print-only, no prompts) when --no-review/--yes is set or stdin/stdout isn't
+# a TTY — this is what keeps non-interactive callers (CI, passthru.tests) from
+# ever blocking on `read`.
+review_mapping_table() {
+  local no_review="$1" auto_commit="$2"
+  local rows
+  rows="$(build_mapping_table)"
+
+  [[ -z "$rows" ]] && return 0
+
+  local interactive=1
+  if [[ -n "$no_review" || -n "$auto_commit" || ! -t 0 || ! -t 1 ]]; then
+    interactive=0
+  fi
+
+  if [[ "$interactive" -eq 0 ]]; then
+    info "Current input/package/module alias mappings:"
+    render_mapping_table <<<"$rows" >&2
+    return 0
+  fi
+
+  while true; do
+    render_mapping_table <<<"$rows" >&2
+
+    local sel_line=""
+    if command -v fzf >/dev/null 2>&1; then
+      sel_line=$(awk -F'\t' '{printf "%s/%s/%s -> %s\n", $1, $2, $3, $4}' <<<"$rows" |
+        fzf --prompt="Rename (Esc to finish): " --height=15 || true)
+    fi
+    if [[ -z "$sel_line" ]]; then
+      local ans
+      read -rp "Rename an entry? [input/kind/upstream, blank to finish]: " ans
+      [[ -z "$ans" ]] && break
+      sel_line="$ans"
+    fi
+
+    local sel_key="${sel_line%% -> *}"
+    local sel_name="${sel_key%%/*}"
+    local rest="${sel_key#*/}"
+    local sel_kind="${rest%%/*}"
+    local sel_upstream="${rest#*/}"
+
+    local sel_row
+    sel_row=$(awk -F'\t' -v n="$sel_name" -v k="$sel_kind" -v u="$sel_upstream" \
+      '$1==n && $2==k && $3==u {print; exit}' <<<"$rows")
+    if [[ -z "$sel_row" ]]; then
+      warn "No such mapping '${sel_name}/${sel_kind}/${sel_upstream}'."
+      continue
+    fi
+    local sel_alias
+    sel_alias=$(cut -f4 <<<"$sel_row")
+
+    local new_alias
+    read -rp "New alias for ${sel_name}/${sel_kind}/${sel_upstream} [${sel_alias}]: " new_alias
+    [[ -z "$new_alias" ]] && continue
+
+    if ! [[ "$new_alias" =~ ^[a-zA-Z][a-zA-Z0-9_-]*$ ]]; then
+      warn "Invalid alias '${new_alias}' (must match ^[a-zA-Z][a-zA-Z0-9_-]*\$)"
+      continue
+    fi
+
+    local owner_row owner_name
+    owner_row=$(find_alias_owner "$new_alias" "$rows")
+    owner_name=$(cut -f1 <<<"$owner_row")
+    if [[ -n "$owner_row" && "$owner_name" != "$sel_name" ]]; then
+      warn "Alias '${new_alias}' already used by input '${owner_name}'."
+      continue
+    fi
+
+    apply_alias_rename "$sel_kind" "$sel_name" "$sel_upstream" "$sel_alias" "$new_alias"
+    case "$sel_kind" in
+    pkg) git add "pkgs/inputs/${sel_name}.nix" ;;
+    home) git add "modules/home/inputs/${sel_name}.nix" ;;
+    nixos) git add "modules/nixos/inputs/${sel_name}.nix" ;;
+    esac
+
+    MAPPING_REVIEW_CHANGED=1
+    MAPPING_REVIEW_LOG+="${sel_name}/${sel_kind}/${sel_upstream}: ${sel_alias} -> ${new_alias}"$'\n'
+    ok "Renamed ${sel_name}/${sel_kind}/${sel_upstream}: ${sel_alias} -> ${new_alias}" >&2
+
+    rows="$(build_mapping_table)"
+  done
+
+  info "Final mapping:"
+  render_mapping_table <<<"$rows" >&2
 }
 
 create_feature_branch() {
@@ -795,7 +1015,7 @@ maybe_generate_module_aggregator() {
 
 cmd_install() {
   local url="" name="" packages_arg="" packages_flag="" auto_commit="" no_commit=""
-  local no_info="" no_branch="" no_modules=""
+  local no_info="" no_branch="" no_modules="" no_review=""
   local -a follows_pairs=()
 
   while [[ $# -gt 0 ]]; do
@@ -833,6 +1053,10 @@ cmd_install() {
       ;;
     --no-modules)
       no_modules=1
+      shift
+      ;;
+    --no-review)
+      no_review=1
       shift
       ;;
     --yes | -y)
@@ -960,7 +1184,12 @@ cmd_install() {
   [[ -n "$nixos_mod_file" ]] && git add "$nixos_mod_file"
   [[ -n "$news_file" ]] && git add "$news_file"
 
+  MAPPING_REVIEW_CHANGED=0
+  MAPPING_REVIEW_LOG=""
+  review_mapping_table "$no_review" "$auto_commit"
+
   finalize_commit "inputMan: add input ${name} (${url})" "$auto_commit" "$no_commit"
+  print_news_entry "$news_file"
 
   INPUTMAN_CLEANUP_ACTIVE=0
   INPUTMAN_CLEANUP_FILE=""
@@ -1072,40 +1301,30 @@ append_module_entries() {
   printf '%s' "$file"
 }
 
-cmd_update() {
-  local name="" auto_commit="" no_commit="" no_modules=""
+# Update a single locked input, rescan it for new packages/modules, and commit
+# the result. No-ops (no news entry, no commit) when the lock entry didn't
+# actually change and no new packages/modules were discovered.
+update_one_input() {
+  local name="$1" auto_commit="$2" no_commit="$3" no_modules="$4"
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-    --yes | -y)
-      auto_commit=1
-      shift
-      ;;
-    --no-commit | -n)
-      no_commit=1
-      shift
-      ;;
-    --no-modules)
-      no_modules=1
-      shift
-      ;;
-    -*) die "Unknown option: $1" ;;
-    *)
-      if [[ -n "$name" ]]; then
-        die "Only one input name may be provided"
-      fi
-      name="$1"
-      shift
-      ;;
-    esac
-  done
+  local update_alias=""
+  if [[ -f "pkgs/inputs/${name}.nix" ]]; then
+    local first_pair
+    first_pair=$(current_package_pairs "$name" | head -n1)
+    [[ -n "$first_pair" ]] && update_alias="${first_pair#*=}"
+  fi
 
-  [[ -z "$name" ]] && die "Usage: inputman update <name> [options]"
-  [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
+  local before_locked before_version=""
+  before_locked=$(jq -c --arg n "$name" '.nodes[$n].locked // {}' flake.lock 2>/dev/null || echo '{}')
+  if [[ -n "$update_alias" ]]; then
+    before_version=$(nix eval ".#${update_alias}.version" --raw 2>/dev/null || echo "")
+  fi
 
   info "Updating input '${name}' ..."
   nix flake update "$name"
-  ok "flake.lock updated for '${name}'"
+
+  local after_locked
+  after_locked=$(jq -c --arg n "$name" '.nodes[$n].locked // {}' flake.lock 2>/dev/null || echo '{}')
 
   local system
   system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
@@ -1214,6 +1433,15 @@ cmd_update() {
     fi
   fi
 
+  if [[ "$before_locked" == "$after_locked" && ${#added_pkgs[@]} -eq 0 &&
+    ${#added_home[@]} -eq 0 && ${#added_nixos[@]} -eq 0 ]]; then
+    info "Input '${name}' is already up to date; no changes."
+    LAST_COMMIT_RESULT="none"
+    return 0
+  fi
+
+  ok "flake.lock updated for '${name}'"
+
   local home_mod_file="" nixos_mod_file=""
   if [[ ${#added_pkgs[@]} -gt 0 ]]; then
     append_package_entries "$name" "${added_pkgs[@]}"
@@ -1229,6 +1457,22 @@ cmd_update() {
   fi
 
   local news_details=""
+  if [[ "$before_locked" != "$after_locked" ]]; then
+    local old_rev new_rev old_date new_date
+    old_rev=$(jq -r '.rev // "unknown"' <<<"$before_locked" | cut -c1-7)
+    new_rev=$(jq -r '.rev // "unknown"' <<<"$after_locked" | cut -c1-7)
+    old_date=$(date -d "@$(jq -r '.lastModified // 0' <<<"$before_locked")" +%Y-%m-%d 2>/dev/null || echo unknown)
+    new_date=$(date -d "@$(jq -r '.lastModified // 0' <<<"$after_locked")" +%Y-%m-%d 2>/dev/null || echo unknown)
+    news_details+="Rev: ${old_rev} -> ${new_rev}"$'\n'"Date: ${old_date} -> ${new_date}"$'\n'
+
+    if [[ -n "$update_alias" ]]; then
+      local after_version
+      after_version=$(nix eval ".#${update_alias}.version" --raw 2>/dev/null || echo "")
+      if [[ -n "$before_version" && -n "$after_version" && "$before_version" != "$after_version" ]]; then
+        news_details+="Package version: ${before_version} -> ${after_version}"$'\n'
+      fi
+    fi
+  fi
   [[ ${#added_pkgs[@]} -gt 0 ]] && news_details+="New packages: ${added_pkgs[*]}"$'\n'
   [[ ${#added_home[@]} -gt 0 ]] && news_details+="New home modules: ${added_home[*]}"$'\n'
   [[ ${#added_nixos[@]} -gt 0 ]] && news_details+="New nixos modules: ${added_nixos[*]}"$'\n'
@@ -1240,10 +1484,11 @@ cmd_update() {
   [[ -n "$nixos_mod_file" ]] && git add "$nixos_mod_file"
   [[ -n "$news_file" ]] && git add "$news_file"
   finalize_commit "inputMan: update input ${name}" "$auto_commit" "$no_commit"
+  print_news_entry "$news_file"
 }
 
-cmd_remove() {
-  local name="" auto_commit="" no_commit=""
+cmd_update() {
+  local name="" auto_commit="" no_commit="" no_modules="" no_review=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1253,6 +1498,70 @@ cmd_remove() {
       ;;
     --no-commit | -n)
       no_commit=1
+      shift
+      ;;
+    --no-modules)
+      no_modules=1
+      shift
+      ;;
+    --no-review)
+      no_review=1
+      shift
+      ;;
+    -*) die "Unknown option: $1" ;;
+    *)
+      if [[ -n "$name" ]]; then
+        die "Only one input name may be provided"
+      fi
+      name="$1"
+      shift
+      ;;
+    esac
+  done
+
+  [[ -z "$name" ]] && die "Usage: inputman update <name|all|*> [options]"
+  [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
+
+  if [[ "$name" == "all" || "$name" == "*" ]]; then
+    local input any=0
+    while IFS= read -r input; do
+      any=1
+      update_one_input "$input" "$auto_commit" "$no_commit" "$no_modules"
+    done < <(list_managed_inputs)
+    [[ "$any" -eq 0 ]] && warn "No managed inputs found under pkgs/inputs/."
+  else
+    update_one_input "$name" "$auto_commit" "$no_commit" "$no_modules"
+  fi
+
+  # Mapping-table review runs once for the whole batch (not touched by update
+  # itself, so re-reviewing per-input would just repeat the same table).
+  MAPPING_REVIEW_CHANGED=0
+  MAPPING_REVIEW_LOG=""
+  review_mapping_table "$no_review" "$auto_commit"
+  if [[ "$MAPPING_REVIEW_CHANGED" -eq 1 ]]; then
+    local rename_news_file
+    rename_news_file=$(write_news_entry rename "$name" "$MAPPING_REVIEW_LOG") || rename_news_file=""
+    [[ -n "$rename_news_file" ]] && git add "$rename_news_file"
+    finalize_commit "inputMan: rename input aliases" "$auto_commit" "$no_commit"
+    print_news_entry "$rename_news_file"
+  fi
+}
+
+cmd_remove() {
+  local name="" auto_commit="" no_commit="" no_review=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    --no-review)
+      no_review=1
       shift
       ;;
     -*) die "Unknown option: $1" ;;
@@ -1291,7 +1600,50 @@ cmd_remove() {
   [[ -f "$nixos_mod_file" ]] || git add "$nixos_mod_file" 2>/dev/null || true
   git rm --ignore-unmatch "$home_mod_file" "$nixos_mod_file" >/dev/null 2>&1 || true
   [[ -n "$news_file" ]] && git add "$news_file"
+
+  MAPPING_REVIEW_CHANGED=0
+  MAPPING_REVIEW_LOG=""
+  review_mapping_table "$no_review" "$auto_commit"
+
   finalize_commit "inputMan: remove input ${name}" "$auto_commit" "$no_commit"
+  print_news_entry "$news_file"
+}
+
+# Review and, when interactive, rename current input/package/module aliases
+# without installing/updating/removing anything else.
+cmd_rename() {
+  local auto_commit="" no_commit=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    *) die "Unknown option: $1 (usage: inputman rename [--yes|-y] [--no-commit|-n])" ;;
+    esac
+  done
+
+  [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
+
+  MAPPING_REVIEW_CHANGED=0
+  MAPPING_REVIEW_LOG=""
+  review_mapping_table "" "$auto_commit"
+
+  if [[ "$MAPPING_REVIEW_CHANGED" -eq 0 ]]; then
+    info "No alias renames applied."
+    return 0
+  fi
+
+  local news_file
+  news_file=$(write_news_entry rename "aliases" "$MAPPING_REVIEW_LOG") || news_file=""
+  [[ -n "$news_file" ]] && git add "$news_file"
+  finalize_commit "inputMan: rename input aliases" "$auto_commit" "$no_commit"
+  print_news_entry "$news_file"
 }
 
 # Run pre-commit on all files (letting hooks reformat), re-stage the files
@@ -1325,6 +1677,10 @@ update)
 remove)
   shift
   cmd_remove "$@"
+  ;;
+rename)
+  shift
+  cmd_rename "$@"
   ;;
 __infer-name)
   shift
@@ -1361,6 +1717,28 @@ __parse-packages-spec)
   shift
   [[ $# -eq 2 ]] || die "Usage: inputman __parse-packages-spec <input-name> <spec>"
   parse_packages_spec "$1" "$2"
+  ;;
+__list-managed-inputs)
+  shift
+  list_managed_inputs
+  ;;
+__mapping-table)
+  shift
+  build_mapping_table | render_mapping_table
+  ;;
+__apply-alias-rename)
+  shift
+  [[ $# -eq 5 ]] || die "Usage: inputman __apply-alias-rename <kind> <name> <upstream> <old-alias> <new-alias>"
+  apply_alias_rename "$1" "$2" "$3" "$4" "$5"
+  ;;
+__diff-locked)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __diff-locked <before.json> <after.json>"
+  if diff -q <(jq -cS . "$1") <(jq -cS . "$2") >/dev/null 2>&1; then
+    echo unchanged
+  else
+    echo changed
+  fi
   ;;
 help | -h | --help) usage ;;
 *) die "Unknown command: ${1}. Run 'inputman help' for usage." ;;
