@@ -1,10 +1,13 @@
 # Derive the gigos-* / gigpkgs-* channel branches from the trunk.
 #
-# Each channel branch is the trunk with ONE marker file rewritten (channel.nix)
-# and the lock refreshed to match it (flake.lock). This workflow, on every push
-# to the trunk, gates on a bare-minimum `nix flake check`, then for each channel
-# overwrites channel.nix, relocks, and force-pushes to the derived branch. No
-# source drift, no merge maintenance — the branches are pure projections.
+# Each channel branch is the trunk with the channel marker rewritten
+# (channel.nix), the top-level `nixpkgs` input repointed at that channel
+# (flake.nix), and the lock refreshed to match (flake.lock). This workflow, on
+# every push to the trunk, gates on a bare-minimum `nix flake check`, then for
+# each channel rewrites those files and force-pushes to the derived branch. So a
+# consumer of e.g. gigos-26.05 gets gigpkgs' overlays on top of a `nixpkgs`
+# input that IS nixos-2605 — not just channel-aware outputs. No source drift, no
+# merge maintenance — the branches stay pure projections of the trunk.
 #
 # Two branch families are derived from the same channels so downstream consumers
 # can pin whichever name they prefer:
@@ -82,20 +85,34 @@ jobs:
           git config user.name  "gigpkgs-bot"
           git config user.email "gigpkgs-bot@users.noreply.github.com"
 
-          # Overwrite ONLY the marker; everything else is identical to the trunk.
+          # 1. Overwrite the channel marker (drives base + selection logic).
           {
             printf '# CI-derived from %s (%s) — do not edit.\n' "${{ github.ref_name }}" "${{ github.sha }}"
             printf '# Regenerated on every push to the trunk by .github/workflows/channels.yml\n'
             printf '"%s"\n' "${{ matrix.channel }}"
           } > channel.nix
 
-          # Relock so the derived branch carries a flake.lock consistent with its
-          # channel marker. `nix flake lock` only adds missing or changed entries
-          # (e.g. flake=false roll-flow siblings the trunk lock may not yet
-          # carry); when the trunk lock is already complete this is a no-op, so
-          # the projection stays a pure marker delta.
+          # 2. Repoint the top-level `nixpkgs` input at this channel's nixpkgs, so
+          #    a consumer of the derived branch gets `nixpkgs = <channel>` directly
+          #    (e.g. gigpkgs-26.05 -> nixpkgs IS nixos-2605), not merely
+          #    channel-aware outputs. The `inputs` block cannot read channel.nix
+          #    itself, so the projection rewrites it here. Anchored to the
+          #    top-level binding so the nested `inputs.nixpkgs.follows = …` lines
+          #    (home-manager, pre-commit) are left untouched. Fail loudly if the
+          #    trunk line ever moves or reformats, rather than silently skipping.
+          matched=$(grep -cE '^[[:space:]]*nixpkgs\.follows = "[^"]*";' flake.nix || true)
+          if [ "$matched" -ne 1 ]; then
+            echo "::error::expected exactly one top-level 'nixpkgs.follows' line in flake.nix, found $matched"
+            exit 1
+          fi
+          sed -i -E 's|^([[:space:]]*)nixpkgs\.follows = "[^"]*";|\1nixpkgs.follows = "${{ matrix.channel }}";|' flake.nix
+          grep -qE "^[[:space:]]*nixpkgs\.follows = \"${{ matrix.channel }}\";" flake.nix
+
+          # 3. Relock so flake.lock reflects the repointed nixpkgs input and picks
+          #    up any missing flake=false siblings (e.g. channel-aware roll-flow).
+          #    `nix flake lock` only adds missing or changed entries.
           nix flake lock --accept-flake-config
 
-          git add channel.nix flake.lock
+          git add channel.nix flake.nix flake.lock
           git commit -m "derive(${{ matrix.branch }}): channel=${{ matrix.channel }} @ ${{ github.sha }}"
           git push --force-with-lease origin "HEAD:refs/heads/${{ matrix.branch }}"
