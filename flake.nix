@@ -29,6 +29,8 @@
     fupdate.url = "github:gignsky/fupdate";
 
     gigvim.url = "github:gignsky/gigvim";
+
+    roll-flow.url = "github:gignsky/roll-flow";
 };
 
   outputs =
