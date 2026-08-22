@@ -1,44 +1,77 @@
 # gigpkgs inputMan: managed input
 #
-# NOTE: upstream (github:k3d3/claude-desktop-linux-flake) still references
-# `nodePackages.asar`, which was removed from nixpkgs (now `pkgs.asar` at the top
-# level). Consuming `inputs.claude-desktop.packages.<system>.claude-desktop`
-# directly therefore throws "nodePackages has been removed" under current
-# nixpkgs. Until upstream is fixed, we take the input's own packages and swap the
-# offending `nativeBuildInputs` entry via overrideAttrs.
+# Two upstream (github:k3d3/claude-desktop-linux-flake) issues force us to
+# rebuild these packages rather than consume the input's outputs directly:
 #
-# We deliberately do NOT re-import upstream's package files by path (e.g.
-# `pkgs.callPackage "${src}/pkgs/patchy-cnb.nix"`): that resolves patchy-cnb's
-# `../patchy-cnb` relative path to a fresh store copy whose `Cargo.lock` is read
-# at eval time (IFD), which fails under `nix flake check --no-build` with
-# "path ... is not valid". Using the input's own outputs keeps those relative
-# paths rooted in the flake, so no extra realisation is needed to evaluate.
+#   1. `nodePackages.asar` — removed from nixpkgs (now `pkgs.asar` at top level),
+#      so the input's claude-desktop throws "nodePackages has been removed".
+#
+#   2. patchy-cnb's `cargoLock.lockFile` resolves upstream's `../patchy-cnb` PATH
+#      LITERAL to a fresh `…-patchy-cnb` store copy, and buildRustPackage reads
+#      that Cargo.lock at eval time. In a fresh store that copy isn't realised, so
+#      `nix flake check --no-build` (CI) dies with "path … is not valid". We avoid
+#      it by pointing src/lockFile at the flake input's own store path via a
+#      string subpath (`"${cd}/patchy-cnb"`), which is already valid — no separate
+#      realisation needed to evaluate.
 {
   inputs,
-  system,
   pkgs,
 }:
 let
-  base = inputs.claude-desktop.packages.${system};
+  cd = inputs.claude-desktop;
 
-  # patchy-cnb doesn't touch nodePackages — expose the input's build as-is.
-  inherit (base) patchy-cnb;
+  # Reproduce upstream's pkgs/patchy-cnb.nix, but source src + Cargo.lock from the
+  # already-valid flake-input store path (see note 2 above) instead of the
+  # `../patchy-cnb` path literal.
+  patchy-cnb = pkgs.rustPlatform.buildRustPackage {
+    pname = "patchy-cnb";
+    version = "0.1.0";
 
-  # Replace the whole nativeBuildInputs list (upstream's, with nodePackages.asar
-  # → pkgs.asar). We must not reference the old value or the removed-set throw
-  # fires; overrideAttrs replaces the thunk, so it never gets forced.
-  claude-desktop = base.claude-desktop.overrideAttrs (_: {
-    nativeBuildInputs = with pkgs; [
-      p7zip
-      asar
-      makeWrapper
-      imagemagick
-      icoutils
-      perl
+    src = "${cd}/patchy-cnb";
+    cargoLock.lockFile = "${cd}/patchy-cnb/Cargo.lock";
+
+    nativeBuildInputs = [
+      pkgs.napi-rs-cli
+      pkgs.nodejs
     ];
-  });
 
-  # Mirror upstream's flake.nix buildFHSEnv wrapper, pointing at our fixed
+    buildPhase = ''
+      runHook preBuild
+      npm run build --offline
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/lib
+      cp patchy-cnb.*.node $out/lib/
+      runHook postInstall
+    '';
+
+    meta = {
+      description = "Stub replacement for claude-native-bindings.node, for use in claude-desktop";
+      license = with pkgs.lib.licenses; [
+        mit
+        asl20
+      ];
+    };
+  };
+
+  # Rebuild upstream's claude-desktop with our patchy-cnb and pkgs.asar in place
+  # of the removed nodePackages.asar (see note 1 above). Its `src = ./.` is a path
+  # LITERAL that addToStore-copies a fresh `…-pkgs` path — the same fresh-copy
+  # hazard as note 2 — so we override src to the valid flake-input subpath. The
+  # original `./.` thunk is replaced by overrideAttrs and never forced.
+  claude-desktop =
+    (pkgs.callPackage "${cd}/pkgs/claude-desktop.nix" {
+      inherit patchy-cnb;
+      nodePackages = { inherit (pkgs) asar; };
+    }).overrideAttrs
+      (_: {
+        src = "${cd}/pkgs";
+      });
+
+  # Mirror upstream's flake.nix buildFHSEnv wrapper, pointing at our rebuilt
   # claude-desktop instead of the broken one baked into the input's outputs.
   claude-desktop-with-fhs = pkgs.buildFHSEnv {
     name = "claude-desktop";
