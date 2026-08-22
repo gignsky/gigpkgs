@@ -418,6 +418,20 @@ current_package_pairs() {
   done <"$file"
 }
 
+# Detect a hand-customized managed input file: one that exists but exposes no
+# standard `inputs.<name>.packages.${system}.<pkg>` passthrough entries (e.g. it
+# rebuilds packages from source, like claude-desktop's asar shim). inputMan can't
+# recover the pkg=alias mapping from such a file, so `update` must not treat it as
+# "zero packages exposed" and re-append the naive (possibly broken) form.
+input_file_is_custom() {
+  local name="$1"
+  local file="pkgs/inputs/${name}.nix"
+  [[ -f "$file" ]] || return 1
+  local pattern='^\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*inputs\.'"$name"'\.packages\.\$\{system\}\.'
+  grep -qE "$pattern" "$file" && return 1
+  return 0
+}
+
 # Read mod=alias pairs currently exposed by modules/<home|nixos>/inputs/<name>.nix.
 current_module_pairs() {
   local name="$1" kind="$2"
@@ -1135,6 +1149,10 @@ cmd_update() {
     for pkg in "${discovered[@]}"; do
       [[ -z "${current_pkg_map[$pkg]:-}" ]] && new_pkg_list+=("$pkg")
     done
+    if input_file_is_custom "$name"; then
+      warn "pkgs/inputs/${name}.nix is hand-customized (no standard passthrough entries); skipping package rescan. Review it manually if the input's package set changed."
+      new_pkg_list=()
+    fi
     if [[ ${#new_pkg_list[@]} -gt 0 ]]; then
       print_rescan_section "packages" "$name" "${existing_pkg_display[@]}"
       for pkg in "${new_pkg_list[@]}"; do
