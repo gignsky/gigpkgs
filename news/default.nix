@@ -56,8 +56,7 @@ let
   # entries read without typing the full string id. Collect them, failing the
   # build if any entry is missing one.
   entryNums = map (
-    entry:
-    entry.num or (throw "gignews: news entry '${entry.id}' is missing the required 'num' field")
+    entry: entry.num or (throw "gignews: news entry '${entry.id}' is missing the required 'num' field")
   ) sortedEntries;
 
   # Validate that the `num` values are unique. Gate the entry list on this check

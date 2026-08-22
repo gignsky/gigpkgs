@@ -58,38 +58,40 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable (lib.mkMerge [
-    {
-      virtualisation.oci-containers.backend = cfg.backend;
-      # Pass the declared services through, defaulting autoStart to true.
-      virtualisation.oci-containers.containers = builtins.mapAttrs (
-        _name: container: { autoStart = lib.mkDefault true; } // container
-      ) cfg.services;
-    }
+  config = lib.mkIf cfg.enable (
+    lib.mkMerge [
+      {
+        virtualisation.oci-containers.backend = cfg.backend;
+        # Pass the declared services through, defaulting autoStart to true.
+        virtualisation.oci-containers.containers = builtins.mapAttrs (
+          _name: container: { autoStart = lib.mkDefault true; } // container
+        ) cfg.services;
+      }
 
-    (lib.mkIf (cfg.backend == "podman") {
-      virtualisation.podman = {
-        enable = true;
-        dockerCompat = lib.mkDefault true;
-      };
-    })
+      (lib.mkIf (cfg.backend == "podman") {
+        virtualisation.podman = {
+          enable = true;
+          dockerCompat = lib.mkDefault true;
+        };
+      })
 
-    (lib.mkIf (cfg.backend == "docker") {
-      virtualisation.docker.enable = true;
-    })
+      (lib.mkIf (cfg.backend == "docker") {
+        virtualisation.docker.enable = true;
+      })
 
-    (lib.mkIf cfg.adhoc.enable {
-      environment.systemPackages =
-        if cfg.backend == "podman" then
-          [
-            pkgs.podman
-            pkgs.podman-compose
-          ]
-        else
-          [
-            pkgs.docker
-            pkgs.docker-compose
-          ];
-    })
-  ]);
+      (lib.mkIf cfg.adhoc.enable {
+        environment.systemPackages =
+          if cfg.backend == "podman" then
+            [
+              pkgs.podman
+              pkgs.podman-compose
+            ]
+          else
+            [
+              pkgs.docker
+              pkgs.docker-compose
+            ];
+      })
+    ]
+  );
 }

@@ -129,6 +129,8 @@
             enable = true;
             excludes = [
               ".github/workflows/flake-check.yml"
+              # Long `run:`/printf shell lines can't be wrapped to 80 cols.
+              ".github/workflows/channels.yml"
             ];
           };
           end-of-file-fixer = {
