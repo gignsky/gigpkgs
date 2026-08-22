@@ -3,7 +3,7 @@
 
   inputs = {
     # nixpkgs stable (source of truth for most packages)
-    nixpkgs.follows = "nixpkgs-master";
+    nixpkgs.follows = "nixpkgs-unstable";
 
     # nixos branches
     nixos-stable.follows = "nixos-2605";

@@ -742,7 +742,7 @@
         ],
         "nixos-unstable": "nixos-unstable_2",
         "nixpkgs": [
-          "nixpkgs-master"
+          "nixpkgs-unstable"
         ],
         "nixpkgs-master": [
           "nixpkgs-unstable"
