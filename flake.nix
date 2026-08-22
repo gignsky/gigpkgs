@@ -25,7 +25,7 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-  
+
     fupdate.url = "github:gignsky/fupdate";
 
     gigvim.url = "github:gignsky/gigvim";
@@ -34,7 +34,7 @@
 
     claude-desktop.url = "github:k3d3/claude-desktop-linux-flake";
     claude-desktop.inputs.nixpkgs.follows = "nixpkgs";
-};
+  };
 
   outputs =
     {
@@ -176,10 +176,10 @@
               upignore
               ;
           }
-          ++ [ self.packages.${system}.gignews ]
-          ++ (import ./pkgs/inputs/devShellPackages.nix {
-            inherit inputs system lib;
-          });
+          ++ [ self.packages.${system}.gignews ];
+        # ++ (import ./pkgs/inputs/devShellPackages.nix {
+        #   inherit inputs system lib;
+        # });
         shellHook = ''
           ${self.pre-commit-check.shellHook}
 
