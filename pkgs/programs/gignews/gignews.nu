@@ -106,7 +106,7 @@ def next-num [entries_dir: string] {
 
 # Normalize a free-form slug into a filesystem/id-safe token.
 def slugify [raw: string] {
-    $raw | str downcase | str replace --all --regex '[^a-z0-9]+' '-' | str trim --char '-'
+    $raw | str lowercase | str replace --all --regex '[^a-z0-9]+' '-' | str trim --char '-'
 }
 
 # Format and display a news entry
@@ -242,7 +242,14 @@ def "main post" [
         return
     }
 
-    let raw_slug = if ($slug | is-not-empty) { $slug } else { (input "Entry slug: ") }
+    # Ctrl-C/Ctrl-D at the prompt surfaces as a spanned shell error; catch it so
+    # aborting shows a clean message instead of a raw interrupt + source excerpt.
+    let raw_slug = if ($slug | is-not-empty) { $slug } else {
+        try { (input "Entry slug: ") } catch {
+            print $"(ansi yellow)Cancelled.(ansi reset)"
+            return
+        }
+    }
     let s = (slugify $raw_slug)
     if ($s == "") {
         print $"(ansi red)Error: empty slug.(ansi reset)"
@@ -281,7 +288,11 @@ def "main post" [
     # Open the editor unless suppressed or the body was supplied non-interactively
     if (not $no_edit) and ($message | is-empty) {
         let editor = ($env.EDITOR? | default "vi")
-        run-external $editor $file
+        # The entry is already written at this point, so a bad $EDITOR only needs
+        # to report where the file landed rather than surface an external error.
+        try { run-external $editor $file } catch {
+            print $"(ansi yellow)Could not open ($editor); file saved at ($file).(ansi reset)"
+        }
     }
 }
 
