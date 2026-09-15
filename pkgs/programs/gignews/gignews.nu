@@ -106,7 +106,7 @@ def next-num [entries_dir: string] {
 
 # Normalize a free-form slug into a filesystem/id-safe token.
 def slugify [raw: string] {
-    $raw | str lowercase | str replace --all --regex '[^a-z0-9]+' '-' | str trim --char '-'
+    $raw | str downcase | str replace --all --regex '[^a-z0-9]+' '-' | str trim --char '-'
 }
 
 # Format and display a news entry
