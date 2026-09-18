@@ -66,6 +66,8 @@
       news = import ./news {
         inherit lib pkgs;
       };
+
+      gigpkgs = self.packages.${system};
     in
     {
       # Extended lib — all of nixpkgs.lib plus gigpkgs helpers (scanPaths, scanPathsNuShell).
@@ -178,7 +180,10 @@
               upignore
               ;
           }
-          ++ [ self.packages.${system}.gignews ];
+          ++ [
+            gigpkgs.gignews
+            gigpkgs.roll-flow
+          ];
         # ++ (import ./pkgs/inputs/devShellPackages.nix {
         #   inherit inputs system lib;
         # });
