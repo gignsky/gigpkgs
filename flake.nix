@@ -32,9 +32,10 @@
 
     roll-flow.url = "github:gignsky/roll-flow";
 
-    claude-desktop.url = "github:k3d3/claude-desktop-linux-flake";
-    claude-desktop.inputs.nixpkgs.follows = "nixpkgs-master";
-  };
+  
+    claude-desktop.url = "github:heytcass/claude-desktop-linux-flake";
+    claude-desktop.inputs.nixpkgs.follows = "nixpkgs";
+};
 
   outputs =
     {
