@@ -32,9 +32,10 @@
 
     roll-flow.url = "github:gignsky/roll-flow";
 
-    claude-desktop.url = "github:k3d3/claude-desktop-linux-flake";
-    claude-desktop.inputs.nixpkgs.follows = "nixpkgs-master";
-  };
+  
+    claude-desktop.url = "github:heytcass/claude-desktop-linux-flake";
+    claude-desktop.inputs.nixpkgs.follows = "nixpkgs";
+};
 
   outputs =
     {
@@ -66,6 +67,8 @@
       news = import ./news {
         inherit lib pkgs;
       };
+
+      gigpkgs = self.packages.${system};
     in
     {
       # Extended lib — all of nixpkgs.lib plus gigpkgs helpers (scanPaths, scanPathsNuShell).
@@ -178,7 +181,10 @@
               upignore
               ;
           }
-          ++ [ self.packages.${system}.gignews ];
+          ++ [
+            gigpkgs.gignews
+            gigpkgs.roll-flow
+          ];
         # ++ (import ./pkgs/inputs/devShellPackages.nix {
         #   inherit inputs system lib;
         # });
