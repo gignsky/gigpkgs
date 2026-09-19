@@ -1,6 +1,6 @@
 {
   id = "2026-09-18-inputman-remove-claude-desktop";
-  num = 36;
+  num = 41;
   date = "2026-09-18";
   message = ''
     Removed flake input 'claude-desktop'

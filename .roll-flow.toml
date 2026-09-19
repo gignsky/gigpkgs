@@ -9,8 +9,8 @@ push_tag = false
 mode = "manage"
 username = "gig"
 hosts = []
-roll_to_rolling_gates = []
-rolling_to_main_gates = []
+roll_to_rolling_gates = ["nix flake check --no-build --accept-flake-config"]
+rolling_to_main_gates = ["nix flake check --no-build --accept-flake-config"]
 host_gates = []
 clean_protect = []
 
