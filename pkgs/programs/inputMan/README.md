@@ -60,6 +60,34 @@ inputman remove gigvim --no-commit
 - `--yes`, `-y` — auto-include new packages/modules with default aliases; commit.
 - `--no-commit`, `-n` — stage only.
 
+## News entries
+
+Every `install` / `update` / `remove` writes a `news/entries/*.nix` entry that
+records *what* changed, not just that something did:
+
+- `update` — locked revision and upstream date on either side of the refresh,
+  plus a version bump line for each exposed package that declares a `version`
+  attribute. When exactly one package changed version, the bump is also put in
+  the entry's first line, which `gignews` shows as the title:
+
+  ```
+  Updated flake input 'roll-flow' (0.2.3 -> 0.2.4)
+
+  Revision: f9d75fc -> a1b2c3d
+  Upstream date: 2026-09-15 -> 2026-09-19
+  Versions:
+    roll-flow 0.2.3 -> 0.2.4
+  ```
+
+  If the refresh found nothing new, the entry says so instead of implying a
+  change.
+- `install` — the revision, upstream date, and package versions the input
+  entered the repo at, so the first `update` has a baseline to diff against.
+- `remove` — the revision the input was locked at when it was dropped.
+
+Inputs whose packages carry no `version` attribute (a plain wrapper
+derivation, for instance) simply report the revision diff.
+
 ## Notes
 
 - On install failure after writing files, inputMan rolls back `flake.nix`, the
