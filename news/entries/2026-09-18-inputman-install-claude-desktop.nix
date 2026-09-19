@@ -1,6 +1,6 @@
 {
   id = "2026-09-18-inputman-install-claude-desktop";
-  num = 37;
+  num = 42;
   date = "2026-09-18";
   message = ''
     Added flake input 'claude-desktop'
