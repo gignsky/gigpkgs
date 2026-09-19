@@ -717,11 +717,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789783675,
-        "narHash": "sha256-mXhXWMmM7OFCp7ezRVprRwHWn2EbF1R11QdcQi1Gduk=",
+        "lastModified": 1789784831,
+        "narHash": "sha256-lYOqFqKZ/7bFlCRwFCwqpSmvBnnQxPlJRhIZW9I6b5Y=",
         "owner": "gignsky",
         "repo": "roll-flow",
-        "rev": "8515942e090441e44e1c6f04f8cd9401f0aefa93",
+        "rev": "f9d75fc18ba7ee156ea4553966dcdc5cf253b309",
         "type": "github"
       },
       "original": {
