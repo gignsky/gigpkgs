@@ -432,6 +432,141 @@ input_file_is_custom() {
   return 0
 }
 
+# ── Version / revision tracking ─────────────────────────────────────────
+# News entries record *what changed*, not just *that something changed*, so
+# install/update/remove capture the locked revision and the evaluated package
+# versions on either side of the operation.
+
+# Read a field ("rev", "lastModified", "ref", ...) from an input's `locked`
+# node in flake.lock. Prints nothing when the node or field is absent.
+locked_input_field() {
+  local name="$1" field="$2"
+  [[ -f flake.lock ]] || return 0
+  jq -r --arg n "$name" --arg f "$field" \
+    '(.nodes[$n].locked[$f] // empty) | tostring' flake.lock 2>/dev/null || true
+}
+
+# Human-sized form of a lock revision (git sha -> 7 chars, others verbatim).
+short_rev() {
+  local rev="$1"
+  [[ -z "$rev" ]] && return 0
+  if [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s' "${rev:0:7}"
+  else
+    printf '%s' "$rev"
+  fi
+}
+
+# Render a lastModified epoch as a UTC date. Empty if it can't be formatted
+# (BSD date on Darwin uses -r, everything else is GNU -d).
+lock_date() {
+  local epoch="$1"
+  [[ "$epoch" =~ ^[0-9]+$ ]] || return 0
+  date -u -d "@${epoch}" +%Y-%m-%d 2>/dev/null ||
+    date -u -r "$epoch" +%Y-%m-%d 2>/dev/null ||
+    true
+}
+
+# Package aliases this repo exposes for <name>, one per line.
+exposed_package_aliases() {
+  local name="$1"
+  local file="pkgs/inputs/${name}.nix"
+  [[ -f "$file" ]] || return 0
+
+  local pair found=0
+  while IFS= read -r pair; do
+    [[ -z "$pair" ]] && continue
+    found=1
+    printf '%s\n' "${pair#*=}"
+  done < <(current_package_pairs "$name")
+  ((found)) && return 0
+
+  # Hand-customized aggregator (see input_file_is_custom): the pkg=alias mapping
+  # isn't recoverable, so fall back to every top-level binding and `inherit`
+  # name in the file. Candidates that aren't real packages evaluate to "" in
+  # input_package_versions and are dropped there.
+  perl -ne '
+    print "$1\n" if /^\s{1,4}([A-Za-z][A-Za-z0-9_-]*)\s*=[^=]/;
+    if (/^\s*inherit\s+([A-Za-z0-9_\s-]+);/) {
+      for my $n (split /\s+/, $1) { print "$n\n" if length $n }
+    }
+  ' "$file" | sort -u
+}
+
+# Evaluate `version` for every alias exposed by <name>, in a single nix eval.
+# Emits "alias=version" lines; aliases with no version attr (or that fail to
+# evaluate) are skipped, so inputs that don't version their packages simply
+# contribute nothing.
+input_package_versions() {
+  local name="$1" system="$2"
+
+  local -a aliases=()
+  local alias
+  while IFS= read -r alias; do
+    [[ -n "$alias" ]] && aliases+=("$alias")
+  done < <(exposed_package_aliases "$name")
+  [[ ${#aliases[@]} -eq 0 ]] && return 0
+
+  local nix_list=""
+  for alias in "${aliases[@]}"; do
+    nix_list+=" \"${alias}\""
+  done
+
+  local json
+  if ! json=$(nix eval --json ".#packages.${system}" --apply "
+    ps:
+      builtins.listToAttrs (map (n: {
+        name = n;
+        value =
+          let r = builtins.tryEval (ps.\${n}.version or \"\");
+          in if r.success && builtins.isString r.value then r.value else \"\";
+      }) [${nix_list} ])
+  " 2>/dev/null); then
+    warn "Could not evaluate package versions for '${name}'; news entry will report revisions only."
+    return 0
+  fi
+
+  printf '%s' "$json" |
+    jq -r 'to_entries[] | select(.value != "") | "\(.key)=\(.value)"' 2>/dev/null || true
+}
+
+# Diff two "alias=version" lists. Emits pipe-separated "alias|old|new" records
+# for every alias whose version changed or that is newly exposed (old is empty
+# in that case). Unchanged aliases are omitted. '|' rather than a tab because
+# `read` collapses runs of whitespace delimiters, which would hide the empty
+# `old` field of a newly exposed package.
+version_changes() {
+  local before="$1" after="$2"
+  local -A old=()
+  local line alias ver
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    old["${line%%=*}"]="${line#*=}"
+  done <<<"$before"
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    alias="${line%%=*}"
+    ver="${line#*=}"
+    if [[ -z "${old[$alias]:-}" ]]; then
+      printf '%s||%s\n' "$alias" "$ver"
+    elif [[ "${old[$alias]}" != "$ver" ]]; then
+      printf '%s|%s|%s\n' "$alias" "${old[$alias]}" "$ver"
+    fi
+  done <<<"$after"
+}
+
+# Render a version_changes record as a human-readable line.
+format_version_change() {
+  local alias="$1" old="$2" new="$3"
+  if [[ -z "$old" ]]; then
+    printf '%s %s (new)' "$alias" "$new"
+  else
+    printf '%s %s -> %s' "$alias" "$old" "$new"
+  fi
+}
+
 # Read mod=alias pairs currently exposed by modules/<home|nixos>/inputs/<name>.nix.
 current_module_pairs() {
   local name="$1" kind="$2"
@@ -566,7 +701,9 @@ next_news_num() {
 }
 
 write_news_entry() {
-  local action="$1" name="$2" details="$3"
+  # headline_suffix lands in the first line of the message, which gignews uses
+  # as the entry title — that's where a version bump is most useful.
+  local action="$1" name="$2" details="$3" headline_suffix="${4:-}"
   local news_dir="news/entries"
 
   if [[ ! -d "$news_dir" ]]; then
@@ -589,15 +726,15 @@ write_news_entry() {
   local headline body
   case "$action" in
   install)
-    headline="Added flake input '${name}'"
+    headline="Added flake input '${name}'${headline_suffix}"
     body="This input was installed by inputMan and is now available via gigpkgs."
     ;;
   update)
-    headline="Updated flake input '${name}'"
+    headline="Updated flake input '${name}'${headline_suffix}"
     body="The flake.lock entry for this input was refreshed by inputMan."
     ;;
   remove)
-    headline="Removed flake input '${name}'"
+    headline="Removed flake input '${name}'${headline_suffix}"
     body="This input was removed from gigpkgs by inputMan."
     ;;
   *)
@@ -963,10 +1100,35 @@ cmd_install() {
   local pkg_summary
   pkg_summary=$(printf '%s ' "${selection[@]}")
   local news_details="Source: ${url}"$'\n'"Packages: ${pkg_summary%% }"
+
+  # Record the revision/versions this input entered the repo at, so a later
+  # `inputman update` has a baseline to diff against in its news entry.
+  local locked_rev locked_modified locked_date
+  locked_rev=$(locked_input_field "$name" rev)
+  locked_modified=$(locked_input_field "$name" lastModified)
+  locked_date=$(lock_date "$locked_modified")
+  [[ -n "$locked_rev" ]] &&
+    news_details+=$'\n'"Revision: $(short_rev "$locked_rev")${locked_date:+ (${locked_date})}"
+
+  local -a version_lines=()
+  local headline_suffix="" pair_version
+  while IFS= read -r pair_version; do
+    [[ -z "$pair_version" ]] && continue
+    version_lines+=("${pair_version%%=*} ${pair_version#*=}")
+  done < <(input_package_versions "$name" "$system")
+  if [[ ${#version_lines[@]} -gt 0 ]]; then
+    news_details+=$'\n'"Versions:"
+    local version_line
+    for version_line in "${version_lines[@]}"; do
+      news_details+=$'\n'"  ${version_line}"
+    done
+    [[ ${#version_lines[@]} -eq 1 ]] && headline_suffix=" (${version_lines[0]#* })"
+  fi
+
   [[ -n "$home_mod_file" ]] && news_details+=$'\n'"Home modules aggregator: ${home_mod_file}"
   [[ -n "$nixos_mod_file" ]] && news_details+=$'\n'"NixOS modules aggregator: ${nixos_mod_file}"
   local news_file
-  news_file=$(write_news_entry install "$name" "$news_details") || news_file=""
+  news_file=$(write_news_entry install "$name" "$news_details" "$headline_suffix") || news_file=""
   INPUTMAN_CLEANUP_NEWS_FILE="$news_file"
 
   git add "$input_file" flake.nix flake.lock
@@ -1117,12 +1279,29 @@ cmd_update() {
   [[ -z "$name" ]] && die "Usage: inputman update <name> [options]"
   [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
 
+  local system
+  system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
+
+  # Snapshot the "before" side of the update so the news entry can report a
+  # revision/version diff rather than just "this input was refreshed".
+  local before_rev before_modified before_versions
+  before_rev=$(locked_input_field "$name" rev)
+  before_modified=$(locked_input_field "$name" lastModified)
+  info "Recording current versions of '${name}' ..."
+  before_versions=$(input_package_versions "$name" "$system")
+
   info "Updating input '${name}' ..."
   nix flake update "$name"
   ok "flake.lock updated for '${name}'"
 
-  local system
-  system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
+  local after_rev after_modified
+  after_rev=$(locked_input_field "$name" rev)
+  after_modified=$(locked_input_field "$name" lastModified)
+  if [[ -n "$before_rev" && "$before_rev" == "$after_rev" ]]; then
+    info "Revision unchanged: $(short_rev "$after_rev")"
+  else
+    ok "Revision: ${before_rev:+$(short_rev "$before_rev") -> }$(short_rev "${after_rev:-unknown}")"
+  fi
 
   local url=""
   url=$(locked_input_url "$name" 2>/dev/null || true)
@@ -1246,12 +1425,47 @@ cmd_update() {
     ok "Added ${#added_nixos[@]} new nixos module entry(ies) to ${nixos_mod_file}"
   fi
 
-  local news_details=""
+  # Re-evaluate versions now that any newly exposed packages are wired up, so
+  # they show in the diff too.
+  local after_versions
+  after_versions=$(input_package_versions "$name" "$system")
+
+  local -a version_lines=()
+  local change alias old_v new_v first_change=""
+  while IFS='|' read -r alias old_v new_v; do
+    [[ -z "$alias" ]] && continue
+    change=$(format_version_change "$alias" "$old_v" "$new_v")
+    version_lines+=("$change")
+    [[ -z "$first_change" ]] && first_change="${old_v:+${old_v} -> }${new_v}"
+    ok "Version: ${change}"
+  done < <(version_changes "$before_versions" "$after_versions")
+
+  local news_details="" headline_suffix=""
+  if [[ -n "$before_rev" && "$before_rev" == "$after_rev" ]]; then
+    news_details+="No upstream changes — still locked at $(short_rev "$after_rev")."$'\n'
+  else
+    [[ -n "$after_rev" ]] &&
+      news_details+="Revision: ${before_rev:+$(short_rev "$before_rev") -> }$(short_rev "$after_rev")"$'\n'
+    local before_date after_date
+    before_date=$(lock_date "$before_modified")
+    after_date=$(lock_date "$after_modified")
+    [[ -n "$after_date" ]] &&
+      news_details+="Upstream date: ${before_date:+${before_date} -> }${after_date}"$'\n'
+  fi
+  if [[ ${#version_lines[@]} -gt 0 ]]; then
+    news_details+="Versions:"$'\n'
+    for change in "${version_lines[@]}"; do
+      news_details+="  ${change}"$'\n'
+    done
+    # A single changed package is the common case (one input, one program), so
+    # put it right in the headline where gignews shows it as the entry title.
+    [[ ${#version_lines[@]} -eq 1 ]] && headline_suffix=" (${first_change})"
+  fi
   [[ ${#added_pkgs[@]} -gt 0 ]] && news_details+="New packages: ${added_pkgs[*]}"$'\n'
   [[ ${#added_home[@]} -gt 0 ]] && news_details+="New home modules: ${added_home[*]}"$'\n'
   [[ ${#added_nixos[@]} -gt 0 ]] && news_details+="New nixos modules: ${added_nixos[*]}"$'\n'
   local news_file
-  news_file=$(write_news_entry update "$name" "$news_details") || news_file=""
+  news_file=$(write_news_entry update "$name" "$news_details" "$headline_suffix") || news_file=""
 
   git add flake.lock "pkgs/inputs/${name}.nix" 2>/dev/null || true
   [[ -n "$home_mod_file" ]] && git add "$home_mod_file"
@@ -1293,6 +1507,12 @@ cmd_remove() {
   local home_mod_file="modules/home/inputs/${name}.nix"
   local nixos_mod_file="modules/nixos/inputs/${name}.nix"
 
+  # Capture the lock state before it's torn out, so the news entry records what
+  # was actually dropped.
+  local locked_rev locked_date
+  locked_rev=$(locked_input_field "$name" rev)
+  locked_date=$(lock_date "$(locked_input_field "$name" lastModified)")
+
   info "Removing input '${name}' ..."
   rm -f "$input_file"
   [[ -f "$home_mod_file" ]] && rm -f "$home_mod_file"
@@ -1301,8 +1521,11 @@ cmd_remove() {
   nix flake lock
   ok "Removed input '${name}' and updated flake.lock"
 
+  local news_details=""
+  [[ -n "$locked_rev" ]] &&
+    news_details="Was locked at $(short_rev "$locked_rev")${locked_date:+ (${locked_date})}."
   local news_file
-  news_file=$(write_news_entry remove "$name" "") || news_file=""
+  news_file=$(write_news_entry remove "$name" "$news_details") || news_file=""
 
   git add "$input_file" flake.nix flake.lock
   [[ -f "$home_mod_file" ]] || git add "$home_mod_file" 2>/dev/null || true
@@ -1379,6 +1602,20 @@ __parse-packages-spec)
   shift
   [[ $# -eq 2 ]] || die "Usage: inputman __parse-packages-spec <input-name> <spec>"
   parse_packages_spec "$1" "$2"
+  ;;
+__version-changes)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __version-changes <before> <after>"
+  while IFS='|' read -r alias old_v new_v; do
+    [[ -z "$alias" ]] && continue
+    format_version_change "$alias" "$old_v" "$new_v"
+    echo
+  done < <(version_changes "$1" "$2")
+  ;;
+__write-news-entry)
+  shift
+  [[ $# -ge 3 ]] || die "Usage: inputman __write-news-entry <action> <name> <details> [suffix]"
+  write_news_entry "$1" "$2" "$3" "${4:-}" >/dev/null
   ;;
 help | -h | --help) usage ;;
 *) die "Unknown command: ${1}. Run 'inputman help' for usage." ;;
