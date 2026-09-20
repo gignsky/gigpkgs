@@ -1,12 +1,3 @@
-# Base nixpkgs channel this branch builds on.
-#
-# This single marker is the ONLY thing that differs between the trunk and each
-# CI-derived `gigos-*` channel branch. flake.nix (outputs) and default.nix (the
-# `import nixpkgs {}` shim) both read it and select `inputs.<channel>` as the
-# base, so pkgs / lib / legacyPackages all descend from one consistent base.
-#
-# The value must name a nixpkgs input declared in flake.nix's `inputs` block
-# (e.g. "nixos-unstable", "nixos-2605"). The trunk tracks unstable; channel
-# branches are derived by overwriting only this file
-# (see .github/workflows/channels.yml).
-"nixos-unstable"
+# CI-derived from master (e9f00e42ef56eb9d47b1ba7511a9b75ba1d8c8d6) — do not edit.
+# Regenerated on every push to the trunk by .github/workflows/channels.yml
+"nixos-2605"
