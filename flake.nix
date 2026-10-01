@@ -25,7 +25,17 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-  };
+
+    fupdate.url = "github:gignsky/fupdate";
+
+    gigvim.url = "github:gignsky/gigvim";
+
+    roll-flow.url = "github:gignsky/roll-flow";
+
+  
+    claude-desktop.url = "github:heytcass/claude-desktop-linux-flake";
+    claude-desktop.inputs.nixpkgs.follows = "nixpkgs";
+};
 
   outputs =
     {
@@ -57,6 +67,8 @@
       news = import ./news {
         inherit lib pkgs;
       };
+
+      gigpkgs = self.packages.${system};
     in
     {
       # Extended lib — all of nixpkgs.lib plus gigpkgs helpers (scanPaths, scanPathsNuShell).
@@ -120,6 +132,8 @@
             enable = true;
             excludes = [
               ".github/workflows/flake-check.yml"
+              # Long `run:`/printf shell lines can't be wrapped to 80 cols.
+              ".github/workflows/channels.yml"
             ];
           };
           end-of-file-fixer = {
@@ -167,10 +181,13 @@
               upignore
               ;
           }
-          ++ [ self.packages.${system}.gignews ]
-          ++ (import ./pkgs/inputs/devShellPackages.nix {
-            inherit inputs system lib;
-          });
+          ++ [
+            gigpkgs.gignews
+            gigpkgs.roll-flow
+          ];
+        # ++ (import ./pkgs/inputs/devShellPackages.nix {
+        #   inherit inputs system lib;
+        # });
         shellHook = ''
           ${self.pre-commit-check.shellHook}
 

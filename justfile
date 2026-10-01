@@ -16,3 +16,6 @@ update:
 
 update-no-commit:
 	nix flake update
+
+pre-commit:
+  pre-commit run --all-files

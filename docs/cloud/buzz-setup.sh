@@ -77,6 +77,8 @@ nix profile install \
   nixpkgs#nushell 2>/dev/null || true
 install -d -m 0755 "$HOME/.config/direnv"
 if ! grep -q nix-direnv "$HOME/.config/direnv/direnvrc" 2>/dev/null; then
+  # $HOME must stay literal — it is expanded by direnv at runtime, not now.
+  # shellcheck disable=SC2016
   echo 'source "$HOME/.nix-profile/share/nix-direnv/direnvrc"' \
     >> "$HOME/.config/direnv/direnvrc"
 fi

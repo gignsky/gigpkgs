@@ -12,7 +12,7 @@ let
   };
 
   inputPackages = import ./inputs {
-    inherit inputs system;
+    inherit inputs system pkgs;
   };
 in
 inputPackages
