@@ -40,7 +40,7 @@ in
       modules,
     }:
     let
-      attr = if kind == "home" then "homeModules" else "nixosModules";
+      attr = if kind == "home" then "homeManagerModules" else "nixosModules";
       mkLine = mod: "  ${modules.${mod}} = inputs.${name}.${attr}.${mod};";
       lines = builtins.concatStringsSep "\n" (builtins.map mkLine (builtins.attrNames modules));
     in

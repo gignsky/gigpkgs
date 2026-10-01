@@ -39,17 +39,42 @@ let
       true
   ) allEntries;
 
-  # Sort entries by date (newest first)
-  sortedEntries = lib.sort (a: b: a.date > b.date) applicableEntries;
+  # Sort entries newest-first by `timestamp` (a precise UTC commit time), falling
+  # back to `date` for any entry without one. Ties (e.g. entries added in the same
+  # commit share a timestamp) are broken by `num` so ordering is deterministic.
+  entrySortKey = entry: entry.timestamp or entry.date;
+  sortedEntries = lib.sort (
+    a: b:
+    let
+      ka = entrySortKey a;
+      kb = entrySortKey b;
+    in
+    if ka == kb then a.num > b.num else ka > kb
+  ) applicableEntries;
+
+  # Every entry must carry a `num` — a short, stable integer id used to mark
+  # entries read without typing the full string id. Collect them, failing the
+  # build if any entry is missing one.
+  entryNums = map (
+    entry: entry.num or (throw "gignews: news entry '${entry.id}' is missing the required 'num' field")
+  ) sortedEntries;
+
+  # Validate that the `num` values are unique. Gate the entry list on this check
+  # so any consumer (entries or json) triggers it.
+  validatedEntries =
+    if (builtins.length entryNums) != (builtins.length (lib.unique entryNums)) then
+      throw "gignews: news entries contain duplicate 'num' values: ${builtins.toJSON entryNums}"
+    else
+      sortedEntries;
 
 in
 {
   # The list of applicable news entries
-  entries = sortedEntries;
+  entries = validatedEntries;
 
   # Generate a JSON file containing all news entries
   # This is used by the CLI and activation script
-  json = pkgs.writeText "gignews.json" (builtins.toJSON sortedEntries);
+  json = pkgs.writeText "gignews.json" (builtins.toJSON validatedEntries);
 
   # For testing: return the raw list
   inherit allEntries applicableEntries;

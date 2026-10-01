@@ -2,7 +2,7 @@
 
 `inputman` manages external flake inputs for gigpkgs-style repositories: it
 adds inputs, wires follows, exposes packages, and auto-discovers
-`homeModules` / `nixosModules` exposed by the input flake.
+`homeManagerModules` / `nixosModules` exposed by the input flake.
 
 ## Commands
 
@@ -49,7 +49,7 @@ inputman remove gigvim --no-commit
   - Bare `-f` / `--follows` → `<input>.inputs.<self>.follows = "";` where
     `<self>` is `basename $(pwd)` (i.e., the current flake's name).
 - `--no-info` — skip metadata probe output.
-- `--no-branch` — skip creating `add-input/<name>` from `origin/main`.
+- `--no-branch` — skip creating `add-input/<name>` from `origin/master`.
 - `--no-modules` — skip module discovery for this install.
 - `--yes`, `-y` — accept prompts (default aliases) and commit without asking.
 - `--no-commit`, `-n` — stage only.
@@ -59,6 +59,34 @@ inputman remove gigvim --no-commit
 - `--no-modules` — skip module re-scan.
 - `--yes`, `-y` — auto-include new packages/modules with default aliases; commit.
 - `--no-commit`, `-n` — stage only.
+
+## News entries
+
+Every `install` / `update` / `remove` writes a `news/entries/*.nix` entry that
+records *what* changed, not just that something did:
+
+- `update` — locked revision and upstream date on either side of the refresh,
+  plus a version bump line for each exposed package that declares a `version`
+  attribute. When exactly one package changed version, the bump is also put in
+  the entry's first line, which `gignews` shows as the title:
+
+  ```
+  Updated flake input 'roll-flow' (0.2.3 -> 0.2.4)
+
+  Revision: f9d75fc -> a1b2c3d
+  Upstream date: 2026-09-15 -> 2026-09-19
+  Versions:
+    roll-flow 0.2.3 -> 0.2.4
+  ```
+
+  If the refresh found nothing new, the entry says so instead of implying a
+  change.
+- `install` — the revision, upstream date, and package versions the input
+  entered the repo at, so the first `update` has a baseline to diff against.
+- `remove` — the revision the input was locked at when it was dropped.
+
+Inputs whose packages carry no `version` attribute (a plain wrapper
+derivation, for instance) simply report the revision diff.
 
 ## Notes
 

@@ -2,7 +2,7 @@
 let
   pkg = pkgs.stdenv.mkDerivation {
     pname = "inputman";
-    version = "0.2.0";
+    version = "0.3.0";
 
     src = ./.;
 
@@ -136,6 +136,61 @@ pkg
           fi
 
           echo "parse_packages_spec verified" > $out
+        '';
+
+    version-changes =
+      pkgs.runCommand "inputman-version-changes-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          before=$'roll-flow=0.2.3\ngigvim=1.0.0'
+          after=$'roll-flow=0.2.4\ngigvim=1.0.0\nroll-flow-cli=0.1.0'
+
+          inputman __version-changes "$before" "$after" > out
+
+          grep -q "^roll-flow 0.2.3 -> 0.2.4$" out
+          grep -q "^roll-flow-cli 0.1.0 (new)$" out
+
+          # Unchanged packages must not appear in the diff.
+          if grep -q "gigvim" out; then
+            echo "unchanged package leaked into the diff"; cat out; exit 1
+          fi
+
+          echo "version_changes verified" > $out
+        '';
+
+    news-entry-version-diff =
+      pkgs.runCommand "inputman-news-entry-version-diff-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+          mkdir -p news/entries
+
+          details=$'Revision: f9d75fc -> a1b2c3d\nUpstream date: 2026-01-01 -> 2026-02-02\nVersions:\n  roll-flow 0.2.3 -> 0.2.4'
+          inputman __write-news-entry update roll-flow "$details" " (0.2.3 -> 0.2.4)"
+
+          entry=$(echo news/entries/*-inputman-update-roll-flow.nix)
+          test -f "$entry"
+
+          grep -q "Updated flake input 'roll-flow' (0.2.3 -> 0.2.4)" "$entry"
+          grep -q "Revision: f9d75fc -> a1b2c3d" "$entry"
+          grep -q "Upstream date: 2026-01-01 -> 2026-02-02" "$entry"
+          grep -q "roll-flow 0.2.3 -> 0.2.4" "$entry"
+          grep -q "num = 1;" "$entry"
+
+          echo "news entry version diff verified" > $out
         '';
 
     patch-flake-add =

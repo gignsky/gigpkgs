@@ -3,7 +3,7 @@
 
   inputs = {
     # nixpkgs stable (source of truth for most packages)
-    nixpkgs.follows = "nixos-unstable";
+    nixpkgs.follows = "nixpkgs-master";
 
     # nixos branches
     nixos-stable.follows = "nixos-2605";
@@ -17,7 +17,7 @@
     # Home Manager
     home-manager = {
       url = "github:nix-community/home-manager/release-26.05";
-      inputs.nixpkgs.follows = "nixos-stable";
+      inputs.nixpkgs.follows = "nixos-2605";
     };
 
     # Pre-commit hooks
@@ -26,30 +26,36 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    roll-flow.url = "github:gignsky/roll-flow/develop";
-    roll-flow.inputs.gigpkgs.inputs.nixpkgs.follows = "nixpkgs-master";
-
     fupdate.url = "github:gignsky/fupdate";
 
     gigvim.url = "github:gignsky/gigvim";
-    gigvim.inputs.gigpkgs.inputs.nixpkgs.follows = "nixos-unstable";
-  };
+
+    roll-flow.url = "github:gignsky/roll-flow";
+
+  
+    claude-desktop.url = "github:heytcass/claude-desktop-linux-flake";
+    claude-desktop.inputs.nixpkgs.follows = "nixpkgs";
+};
 
   outputs =
     {
       self,
-      nixpkgs,
-      # nixpkgs-unstable,
       ...
     }@inputs:
     let
       # inherit (self) outputs;
-      lib = nixpkgs.lib.extend (_final: prev: import ./lib { lib = prev; });
+
+      # Base nixpkgs channel for this branch, selected by the channel.nix marker.
+      # gigos-* channel branches are CI-derived from the trunk by overwriting
+      # ONLY that file, so every output below descends from one consistent base.
+      channel = import ./channel.nix;
+      base = inputs.${channel};
+
+      lib = base.lib.extend (_final: prev: import ./lib { lib = prev; });
       system = "x86_64-linux";
 
-      # Build the super nixpkgs set:
-      # nixpkgs stable + gigpkgs overlays (additions, unstable-packages)
-      pkgs = import nixpkgs {
+      # Super nixpkgs: the selected base channel + gigpkgs overlays.
+      pkgs = import base {
         inherit system;
         config = {
           allowUnfree = true;
@@ -61,19 +67,22 @@
       news = import ./news {
         inherit lib pkgs;
       };
+
+      gigpkgs = self.packages.${system};
     in
     {
       # Extended lib — all of nixpkgs.lib plus gigpkgs helpers (scanPaths, scanPathsNuShell).
       # Consumers: inputs.gigpkgs.lib.scanPaths
       inherit lib;
 
-      # LegacyPackages — nixos-stable extended with gigpkgs custom packages.
-      # Use inputs.gigpkgs.legacyPackages.${system} in consuming flakes as a
-      # drop-in for nixpkgs.legacyPackages.${system} that includes gigpkgs packages.
+      # LegacyPackages — the branch's base channel extended with gigpkgs custom
+      # packages (same `base` as `pkgs` above — unified via channel.nix). Use
+      # inputs.gigpkgs.legacyPackages.${system} in consuming flakes as a drop-in
+      # for nixpkgs.legacyPackages.${system} that includes gigpkgs packages.
       legacyPackages = lib.genAttrs [
         "x86_64-linux"
         "aarch64-linux"
-      ] (s: inputs.nixos-stable.legacyPackages.${s}.extend self.overlays.default);
+      ] (s: base.legacyPackages.${s}.extend self.overlays.default);
 
       # Individual gigpkgs packages for direct access (e.g. `nix build .#locker`)
       packages.${system} = import ./pkgs {
@@ -93,7 +102,7 @@
 
       # Home Manager modules — auto-discovered from modules/home/ (+ inputMan-managed
       # aggregators under modules/home/inputs/).
-      homeModules = import ./modules/home { inherit lib inputs; };
+      homeManagerModules = import ./modules/home { inherit lib inputs; };
 
       # Pre-commit hooks for this repo
       pre-commit-check = inputs.pre-commit-hooks.lib.${system}.run {
@@ -123,6 +132,8 @@
             enable = true;
             excludes = [
               ".github/workflows/flake-check.yml"
+              # Long `run:`/printf shell lines can't be wrapped to 80 cols.
+              ".github/workflows/channels.yml"
             ];
           };
           end-of-file-fixer = {
@@ -170,10 +181,13 @@
               upignore
               ;
           }
-          ++ [ self.packages.${system}.gignews ]
-          ++ (import ./pkgs/inputs/devShellPackages.nix {
-            inherit inputs system lib;
-          });
+          ++ [
+            gigpkgs.gignews
+            gigpkgs.roll-flow
+          ];
+        # ++ (import ./pkgs/inputs/devShellPackages.nix {
+        #   inherit inputs system lib;
+        # });
         shellHook = ''
           ${self.pre-commit-check.shellHook}
 
