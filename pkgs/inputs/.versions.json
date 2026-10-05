@@ -1,0 +1,18 @@
+{
+  "roll-flow": [
+    {
+      "rev": "15683995d37e93f90e991303ccfa111f37fe51fb",
+      "date": "2026-10-01",
+      "versions": {
+        "roll-flow": "0.2.5"
+      }
+    },
+    {
+      "rev": "ec731b2deb8c5f5d9f518563e548e08f4fd593aa",
+      "date": "2026-10-05",
+      "versions": {
+        "roll-flow": "0.2.6-dev"
+      }
+    }
+  ]
+}
