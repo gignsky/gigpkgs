@@ -42,12 +42,15 @@ inputman remove gigvim --no-commit
 ## Pin / versions / branch examples
 
 ```bash
-inputman versions roll-flow          # list upstream tags, newest first
+inputman versions roll-flow          # list upstream tags + recorded versions
 inputman pin roll-flow v0.2.3        # lock just roll-flow back to that tag
 inputman update roll-flow            # drop the pin, resume tracking the branch HEAD
 
+inputman branch roll-flow develop    # track a rolling branch
+inputman pin roll-flow 0.2.5         # ...then pin back to a version that branch
+                                      # reported but never tagged upstream
+
 inputman branch roll-flow            # fuzzy-pick a branch from the upstream repo
-inputman branch roll-flow some-feature-branch
 ```
 
 `pin` only edits that one input's node in `flake.lock` — every other input's
@@ -61,6 +64,23 @@ argument it fetches the upstream repo's branches and opens an `fzf` picker.
 
 Both `pin` and `branch` currently only support `github:owner/repo`-style
 inputs (everything inputMan manages today).
+
+### Local version ledger
+
+`install`, `update`, `branch`, and `pin` all record every `{rev, date,
+versions}` they observe into `pkgs/inputs/.versions.json` (committed like any
+other generated file). This matters for inputs tracked against a rolling
+branch rather than tagged releases: upstream only has git tags for actual
+releases, so a `develop`-branch commit reporting version `0.2.6` has no tag
+to pin back to later — only gigpkgs' own history knows which rev that was.
+
+`pin <name> <ref>` uses this ledger automatically: it first checks whether
+`<ref>` matches a version string this repo has previously recorded for
+`<name>` (on any exposed package alias), and if so pins to the exact rev that
+version came from. Only when there's no match does it fall back to treating
+`<ref>` as a literal upstream tag/branch/rev. `inputman versions <name>`
+shows both sources — upstream tags, and anything recorded locally that isn't
+one — so you can see what's actually pinnable.
 
 ## Install options
 
