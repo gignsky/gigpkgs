@@ -13,6 +13,13 @@ adds inputs, wires follows, exposes packages, and auto-discovers
   include any new packages or modules.
 - `inputman remove <name>` — drop the input, its packages/module files, and the
   entries in `flake.nix`.
+- `inputman pin <name> <ref>` — lock a single input to a specific tag/rev,
+  independent of every other input's locked version.
+- `inputman versions <name>` — list known upstream tags for an input (and
+  which one is currently locked), as candidates for `pin`.
+- `inputman branch <name> [branch]` — point an input at a different branch and
+  relock it; fuzzy-picks from the remote's branches via `fzf` when none is
+  given.
 
 ## Install examples
 
@@ -31,6 +38,29 @@ inputman update gigvim -y
 inputman update gigvim               # prompts per new package/module
 inputman remove gigvim --no-commit
 ```
+
+## Pin / versions / branch examples
+
+```bash
+inputman versions roll-flow          # list upstream tags, newest first
+inputman pin roll-flow v0.2.3        # lock just roll-flow back to that tag
+inputman update roll-flow            # drop the pin, resume tracking the branch HEAD
+
+inputman branch roll-flow            # fuzzy-pick a branch from the upstream repo
+inputman branch roll-flow some-feature-branch
+```
+
+`pin` only edits that one input's node in `flake.lock` — every other input's
+locked revision is untouched, so you don't have to roll back the whole
+gigpkgs repo (and every other input with it) just to get one input back to an
+older version. The pin sticks until you `update` or `pin` that input again.
+
+`branch` instead rewrites the input's `url` in `flake.nix` (so it keeps
+tracking that branch on future `update` runs) and relocks it. With no branch
+argument it fetches the upstream repo's branches and opens an `fzf` picker.
+
+Both `pin` and `branch` currently only support `github:owner/repo`-style
+inputs (everything inputMan manages today).
 
 ## Install options
 
@@ -60,10 +90,25 @@ inputman remove gigvim --no-commit
 - `--yes`, `-y` — auto-include new packages/modules with default aliases; commit.
 - `--no-commit`, `-n` — stage only.
 
+## Pin options
+
+- `--yes`, `-y` — commit without prompting.
+- `--no-commit`, `-n` — stage only.
+
+## Versions options
+
+- `--limit <n>` — max tags to show (default: 25, newest first).
+
+## Branch options
+
+- `--yes`, `-y` — commit without prompting.
+- `--no-commit`, `-n` — stage only.
+
 ## News entries
 
-Every `install` / `update` / `remove` writes a `news/entries/*.nix` entry that
-records *what* changed, not just that something did:
+Every `install` / `update` / `remove` / `pin` / `branch` writes a
+`news/entries/*.nix` entry that records *what* changed, not just that
+something did:
 
 - `update` — locked revision and upstream date on either side of the refresh,
   plus a version bump line for each exposed package that declares a `version`
@@ -84,6 +129,9 @@ records *what* changed, not just that something did:
 - `install` — the revision, upstream date, and package versions the input
   entered the repo at, so the first `update` has a baseline to diff against.
 - `remove` — the revision the input was locked at when it was dropped.
+- `pin` — the ref it was pinned to and the resulting revision/version diff,
+  same shape as `update`'s entry.
+- `branch` — the new branch and the resulting revision/version diff.
 
 Inputs whose packages carry no `version` attribute (a plain wrapper
 derivation, for instance) simply report the revision diff.
