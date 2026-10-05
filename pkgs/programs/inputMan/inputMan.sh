@@ -23,14 +23,20 @@ Commands:
   install <url>        Add a flake input and expose its packages + modules
   update <name>        Refresh a locked input; prompt for new packages/modules
   remove <name>        Remove a flake input and its generated files
-  pin <name> <ref>     Lock a single input to a specific tag/rev/version,
-                        independent of the rest of gigpkgs' locked inputs.
-                        <ref> may be an upstream tag/branch/rev, OR a version
+  pin <name> <ref>     Materialize a permanent "<name>-<ref>" package (e.g.
+                        roll-flow-0.2.5), backed by its own frozen flake
+                        input. The bare <name> package is untouched and keeps
+                        tracking whatever 'update'/'branch' has it at. <ref>
+                        may be an upstream tag/branch/rev, OR a version
                         string this repo has previously seen for <name> (even
-                        one never tagged upstream, e.g. on a rolling branch)
+                        one never tagged upstream, e.g. on a rolling branch).
+                        'update'/'branch' also do this automatically whenever
+                        they change <name>'s version, for both the version
+                        being left behind and the one just moved to
   versions <name>      List known versions for an input: upstream tags, plus
-                        anything recorded in gigpkgs' own update/branch/pin
-                        history — as candidates for 'pin'
+                        anything recorded in gigpkgs' own update/branch
+                        history — as candidates for 'pin'. Marks which ones
+                        are already materialized
   branch <name> [b]    Point an input at a different branch (fuzzy-picked via
                         fzf when no branch is given) and relock it
   help                 Show this help
@@ -84,10 +90,10 @@ Examples:
   inputman update gigvim -y
   inputman remove gigvim --no-commit
   inputman versions roll-flow                      # list tags/recorded versions to pin to
-  inputman pin roll-flow v0.2.3                    # lock just roll-flow back to a tag
-  inputman branch roll-flow develop                # track a rolling branch
-  inputman pin roll-flow 0.2.5                     # ...then pin back to a version that
-                                                    # branch reported but never tagged
+  inputman pin roll-flow v0.2.3                    # materialize roll-flow-v0.2.3, permanently
+  inputman branch roll-flow develop                # track a rolling branch (bare pkg follows it)
+  inputman pin roll-flow 0.2.5                     # materialize roll-flow-0.2.5 from a version
+                                                    # develop reported but never tagged upstream
   inputman branch roll-flow                        # fuzzy-pick a branch
 EOF_USAGE
 }
@@ -700,6 +706,17 @@ format_version_change() {
   fi
 }
 
+# Extract the version string for the primary alias (the one matching <name>
+# itself, e.g. "roll-flow") from an "alias=version" line list. Prints nothing
+# if that alias isn't present or doesn't declare a version.
+primary_version_from() {
+  local name="$1" versions="$2"
+  local line
+  while IFS= read -r line; do
+    [[ "${line%%=*}" == "$name" ]] && { printf '%s' "${line#*=}"; return 0; }
+  done <<<"$versions"
+}
+
 # Read mod=alias pairs currently exposed by modules/<home|nixos>/inputs/<name>.nix.
 current_module_pairs() {
   local name="$1" kind="$2"
@@ -871,8 +888,8 @@ write_news_entry() {
     body="This input was removed from gigpkgs by inputMan."
     ;;
   pin)
-    headline="Pinned flake input '${name}' to ${ref_label}${headline_suffix}"
-    body="This input was pinned to ${ref_label} by inputMan; it will keep tracking that ref until the next 'inputman update ${name}' or 'inputman pin ${name}'. Other gigpkgs inputs are unaffected."
+    headline="Pinned '${name}' version ${ref_label}${headline_suffix}"
+    body="A permanent package was materialized for this version by inputMan, backed by its own frozen flake input. The bare '${name}' package is unaffected and keeps tracking whatever 'update'/'branch' currently has it at."
     ;;
   branch)
     headline="Switched flake input '${name}' to branch '${ref_label}'${headline_suffix}"
@@ -1587,6 +1604,21 @@ cmd_update() {
   after_versions=$(input_package_versions "$name" "$system")
   record_input_version "$name" "$after_rev" "$after_date" "$after_versions"
 
+  # When the bare <name> package's own version actually changed, materialize
+  # permanent version-named packages for BOTH sides of the move — the one
+  # being left behind (so it stays available after the bare package moves
+  # on) and the new one (so it's immediately citable by exact version too).
+  local -a archived_aliases=()
+  local before_primary after_primary archived_alias
+  before_primary=$(primary_version_from "$name" "$before_versions")
+  after_primary=$(primary_version_from "$name" "$after_versions")
+  if [[ -n "$before_primary" && -n "$after_primary" && "$before_primary" != "$after_primary" ]]; then
+    archived_alias=$(materialize_version_package "$name" "$before_primary" "$before_rev")
+    [[ -n "$archived_alias" ]] && archived_aliases+=("$archived_alias")
+    archived_alias=$(materialize_version_package "$name" "$after_primary" "$after_rev")
+    [[ -n "$archived_alias" ]] && archived_aliases+=("$archived_alias")
+  fi
+
   local -a version_lines=()
   local change alias old_v new_v first_change=""
   while IFS='|' read -r alias old_v new_v; do
@@ -1618,6 +1650,7 @@ cmd_update() {
   [[ ${#added_pkgs[@]} -gt 0 ]] && news_details+="New packages: ${added_pkgs[*]}"$'\n'
   [[ ${#added_home[@]} -gt 0 ]] && news_details+="New home modules: ${added_home[*]}"$'\n'
   [[ ${#added_nixos[@]} -gt 0 ]] && news_details+="New nixos modules: ${added_nixos[*]}"$'\n'
+  [[ ${#archived_aliases[@]} -gt 0 ]] && news_details+="Archived as: ${archived_aliases[*]}"$'\n'
   local news_file
   news_file=$(write_news_entry update "$name" "$news_details" "$headline_suffix") || news_file=""
 
@@ -1709,6 +1742,67 @@ github_owner_repo() {
   printf '%s %s\n' "$owner" "$repo"
 }
 
+# Nix-identifier-safe form of a version string, for use as a flake input name
+# (input identifiers can't contain dots; the exposed PACKAGE alias keeps the
+# dots, since a quoted Nix attribute name like "roll-flow-0.2.5" is fine).
+version_ident() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_-' '_'
+}
+
+# Ensure a permanent, version-named package exists for <name> at <version> —
+# e.g. "roll-flow-0.2.5" — backed by its own flake input frozen to <ref>
+# (a tag, branch, or exact rev; nix resolves it once and locks it in place).
+# This is how versions stay available by name even after the bare <name>
+# package moves on to track something newer: the bare package always reads
+# from the shared <name> input, untouched here, while each version gets its
+# own independent input that nothing else will ever move.
+#
+# Idempotent — a no-op if that input already exists. Prints the alias it
+# created on success, or nothing if there was nothing new to do.
+# Whether a permanent "<name>-<version>" package has already been
+# materialized (i.e. exposed in pkgs/inputs/<name>.nix).
+is_version_materialized() {
+  local name="$1" version="$2"
+  grep -qF "\"${name}-${version}\" = inputs." "pkgs/inputs/${name}.nix" 2>/dev/null
+}
+
+materialize_version_package() {
+  local name="$1" version="$2" ref="$3"
+  [[ -n "$version" && -n "$ref" ]] || return 0
+
+  local alias="${name}-${version}"
+  local ident_suffix
+  ident_suffix=$(version_ident "$version")
+  local ident="${name}-${ident_suffix}"
+  local file="pkgs/inputs/${name}.nix"
+
+  local have_input=0 have_alias=0
+  grep -qP "^\s+${ident}[. =]" flake.nix 2>/dev/null && have_input=1
+  is_version_materialized "$name" "$version" && have_alias=1
+
+  [[ "$have_input" -eq 1 && "$have_alias" -eq 1 ]] && return 0
+
+  if [[ "$have_input" -eq 0 ]]; then
+    local owner repo
+    read -r owner repo < <(github_owner_repo "$name" "pin")
+    info "Materializing '${alias}' (flake input '${ident}') at ${ref} ..." >&2
+    patch_flake_add "$ident" "github:${owner}/${repo}/${ref}"
+    if ! nix flake lock >&2; then
+      git checkout -- flake.nix >/dev/null 2>&1 || true
+      warn "Failed to lock '${ident}' for '${alias}'; skipped (rolled back flake.nix)." >&2
+      return 0
+    fi
+  fi
+
+  if [[ "$have_alias" -eq 0 && -f "$file" ]]; then
+    append_lines_before_close "$file" "  \"${alias}\" = inputs.${ident}.packages.\${system}.default;"
+  fi
+
+  git add flake.nix flake.lock "$file" 2>/dev/null || true
+  ok "Materialized '${alias}'" >&2
+  printf '%s' "$alias"
+}
+
 cmd_pin() {
   local name="" ref="" auto_commit="" no_commit=""
 
@@ -1740,89 +1834,35 @@ cmd_pin() {
   [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
   [[ -f flake.lock ]] || die "No flake.lock found — run 'inputman update ${name}' first"
 
-  local owner repo
-  read -r owner repo < <(github_owner_repo "$name" "pin")
-
   # A version string (e.g. "0.2.5") may never have been an upstream git tag —
   # on a rolling branch like 'develop' it's just whatever the derivation
   # happened to report at some commit. Check the local ledger first (built up
-  # by install/update/branch/pin) for a rev that reported it; fall back to
+  # by install/update/branch) for a rev that reported it; fall back to
   # treating the argument as a literal upstream ref (tag/branch/rev) when
   # there's no match.
-  local resolved_rev override_url
+  local resolved_rev target_ref
   resolved_rev=$(lookup_version_rev "$name" "$ref")
   if [[ -n "$resolved_rev" ]]; then
-    info "'${ref}' matches a recorded version of '${name}' at $(short_rev "$resolved_rev") — pinning to that revision."
-    override_url="github:${owner}/${repo}/${resolved_rev}"
+    info "'${ref}' matches a recorded version of '${name}' at $(short_rev "$resolved_rev")."
+    target_ref="$resolved_rev"
   else
-    override_url="github:${owner}/${repo}/${ref}"
+    target_ref="$ref"
   fi
 
-  local system
-  system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
-
-  local before_rev before_modified before_versions
-  before_rev=$(locked_input_field "$name" rev)
-  before_modified=$(locked_input_field "$name" lastModified)
-  info "Recording current versions of '${name}' ..."
-  before_versions=$(input_package_versions "$name" "$system")
-
-  info "Pinning input '${name}' to ${ref} (${override_url}) ..."
-  nix flake lock --override-input "$name" "$override_url"
-  ok "flake.lock updated for '${name}'"
-
-  local after_rev after_modified
-  after_rev=$(locked_input_field "$name" rev)
-  after_modified=$(locked_input_field "$name" lastModified)
-  if [[ -n "$before_rev" && "$before_rev" == "$after_rev" ]]; then
-    info "Revision unchanged: $(short_rev "$after_rev")"
-  else
-    ok "Revision: ${before_rev:+$(short_rev "$before_rev") -> }$(short_rev "${after_rev:-unknown}")"
+  local alias
+  alias=$(materialize_version_package "$name" "$ref" "$target_ref")
+  if [[ -z "$alias" ]]; then
+    ok "'${name}-${ref}' is already materialized; nothing to do."
+    return 0
   fi
 
-  local before_date after_date
-  before_date=$(lock_date "$before_modified")
-  after_date=$(lock_date "$after_modified")
-  record_input_version "$name" "$before_rev" "$before_date" "$before_versions"
-
-  local after_versions
-  after_versions=$(input_package_versions "$name" "$system")
-  record_input_version "$name" "$after_rev" "$after_date" "$after_versions"
-
-  local -a version_lines=()
-  local change alias old_v new_v first_change=""
-  while IFS='|' read -r alias old_v new_v; do
-    [[ -z "$alias" ]] && continue
-    change=$(format_version_change "$alias" "$old_v" "$new_v")
-    version_lines+=("$change")
-    [[ -z "$first_change" ]] && first_change="${old_v:+${old_v} -> }${new_v}"
-    ok "Version: ${change}"
-  done < <(version_changes "$before_versions" "$after_versions")
-
-  local news_details="" headline_suffix=""
-  if [[ -n "$before_rev" && "$before_rev" == "$after_rev" ]]; then
-    news_details+="Already locked at $(short_rev "$after_rev")."$'\n'
-  else
-    [[ -n "$after_rev" ]] &&
-      news_details+="Revision: ${before_rev:+$(short_rev "$before_rev") -> }$(short_rev "$after_rev")"$'\n'
-    [[ -n "$after_date" ]] &&
-      news_details+="Upstream date: ${before_date:+${before_date} -> }${after_date}"$'\n'
-  fi
-  if [[ ${#version_lines[@]} -gt 0 ]]; then
-    news_details+="Versions:"$'\n'
-    for change in "${version_lines[@]}"; do
-      news_details+="  ${change}"$'\n'
-    done
-    [[ ${#version_lines[@]} -eq 1 ]] && headline_suffix=" (${first_change})"
-  fi
-
+  local news_details
+  news_details="A permanent package '${alias}' was materialized for '${name}' at version ${ref} (${target_ref}), independent of the bare '${name}' package — which keeps tracking whatever 'update'/'branch' currently has it at."
   local news_file
-  news_file=$(write_news_entry pin "$name" "$news_details" "$headline_suffix" "$ref") || news_file=""
-
-  git add flake.lock
+  news_file=$(write_news_entry pin "$name" "$news_details" " (${alias})" "$ref") || news_file=""
   [[ -n "$news_file" ]] && git add "$news_file"
-  [[ -f "$(versions_ledger_file)" ]] && git add "$(versions_ledger_file)"
-  finalize_commit "inputMan: pin input ${name} to ${ref}" "$auto_commit" "$no_commit"
+
+  finalize_commit "inputMan: pin ${name} ${ref} as ${alias}" "$auto_commit" "$no_commit"
 }
 
 cmd_versions() {
@@ -1885,12 +1925,13 @@ cmd_versions() {
       tag="${sorted_tags[$i]}"
       rev="${tag_rev[$tag]}"
       marker=""
-      [[ -n "$current_rev" && "$rev" == "$current_rev" ]] && marker="  <- currently locked"
+      [[ -n "$current_rev" && "$rev" == "$current_rev" ]] && marker+="  <- currently locked"
+      is_version_materialized "$name" "$tag" && marker+="  [materialized as ${name}-${tag}]"
       printf '  %-20s %s%s\n' "$tag" "$(short_rev "$rev")" "$marker"
     done
   fi
 
-  # Versions this repo's own update/branch/pin history has observed for this
+  # Versions this repo's own update/branch history has observed for this
   # input — this is what covers a rolling branch (e.g. 'develop'), where the
   # version string a derivation reports usually isn't backed by any upstream
   # git tag at all, so `pin` has to resolve it from here instead.
@@ -1912,13 +1953,14 @@ cmd_versions() {
       local date ver rev marker
       while IFS=$'\t' read -r date ver rev; do
         marker=""
-        [[ -n "$current_rev" && "$rev" == "$current_rev" ]] && marker="  <- currently locked"
+        [[ -n "$current_rev" && "$rev" == "$current_rev" ]] && marker+="  <- currently locked"
+        is_version_materialized "$name" "$ver" && marker+="  [materialized as ${name}-${ver}]"
         printf '  %-20s %-10s %s%s\n' "$ver" "$date" "$(short_rev "$rev")" "$marker"
       done <<<"$recorded"
     fi
   fi
 
-  info "Pin with: inputman pin ${name} <tag-or-version>"
+  info "Pin with: inputman pin ${name} <tag-or-version>  (materializes a permanent ${name}-<version> package)"
 }
 
 cmd_branch() {
@@ -2006,6 +2048,20 @@ cmd_branch() {
   after_versions=$(input_package_versions "$name" "$system")
   record_input_version "$name" "$after_rev" "$after_date" "$after_versions"
 
+  # When the bare <name> package's own version actually changed, materialize
+  # permanent version-named packages for BOTH sides of the move — see the
+  # matching comment in cmd_update for why.
+  local -a archived_aliases=()
+  local before_primary after_primary archived_alias
+  before_primary=$(primary_version_from "$name" "$before_versions")
+  after_primary=$(primary_version_from "$name" "$after_versions")
+  if [[ -n "$before_primary" && -n "$after_primary" && "$before_primary" != "$after_primary" ]]; then
+    archived_alias=$(materialize_version_package "$name" "$before_primary" "$before_rev")
+    [[ -n "$archived_alias" ]] && archived_aliases+=("$archived_alias")
+    archived_alias=$(materialize_version_package "$name" "$after_primary" "$after_rev")
+    [[ -n "$archived_alias" ]] && archived_aliases+=("$archived_alias")
+  fi
+
   local -a version_lines=()
   local change alias old_v new_v first_change=""
   while IFS='|' read -r alias old_v new_v; do
@@ -2030,6 +2086,7 @@ cmd_branch() {
     done
     [[ ${#version_lines[@]} -eq 1 ]] && headline_suffix=" (${first_change})"
   fi
+  [[ ${#archived_aliases[@]} -gt 0 ]] && news_details+="Archived as: ${archived_aliases[*]}"$'\n'
 
   local news_file
   news_file=$(write_news_entry branch "$name" "$news_details" "$headline_suffix" "$branch") || news_file=""
