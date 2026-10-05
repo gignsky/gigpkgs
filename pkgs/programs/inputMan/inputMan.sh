@@ -20,10 +20,16 @@ usage() {
 Usage: inputman <command> [options]
 
 Commands:
-  install <url>    Add a flake input and expose its packages + modules
-  update <name>    Refresh a locked input; prompt for new packages/modules
-  remove <name>    Remove a flake input and its generated files
-  help             Show this help
+  install <url>        Add a flake input and expose its packages + modules
+  update <name>        Refresh a locked input; prompt for new packages/modules
+  remove <name>        Remove a flake input and its generated files
+  pin <name> <ref>     Lock a single input to a specific tag/rev, independent
+                        of the rest of gigpkgs' locked inputs
+  versions <name>      List known upstream tags for an input (and which one
+                        is currently locked), as candidates for 'pin'
+  branch <name> [b]    Point an input at a different branch (fuzzy-picked via
+                        fzf when no branch is given) and relock it
+  help                 Show this help
 
 Install options:
   --name <name>          Override the input name (default: inferred from URL)
@@ -54,6 +60,17 @@ Remove options:
   --yes, -y              Commit without prompting
   --no-commit, -n        Stage changes but do not commit
 
+Pin options:
+  --yes, -y              Commit without prompting
+  --no-commit, -n        Stage changes but do not commit
+
+Versions options:
+  --limit <n>            Max tags to show (default: 25, newest first)
+
+Branch options:
+  --yes, -y              Commit without prompting
+  --no-commit, -n        Stage changes but do not commit
+
 Examples:
   inputman install github:nix-community/nur
   inputman install github:gignsky/gigvim -f nixpkgs=nixpkgs --yes
@@ -62,6 +79,10 @@ Examples:
   inputman install github:gignsky/gigvim -p default=gigvim,nightly=gigvim-nightly
   inputman update gigvim -y
   inputman remove gigvim --no-commit
+  inputman versions roll-flow                      # list tags to pin to
+  inputman pin roll-flow v0.2.3                    # lock just roll-flow back
+  inputman branch roll-flow                        # fuzzy-pick a branch
+  inputman branch roll-flow some-feature-branch
 EOF_USAGE
 }
 
@@ -405,6 +426,41 @@ PERL
   rm -f "$err_file"
 }
 
+# Rewrite an existing `<name>.url = "...";` line in flake.nix to a new URL.
+# Used by `inputman branch` to change which ref an input tracks. Only supports
+# the single-line dotted form inputMan itself generates (patch_flake_add);
+# dies if the input isn't declared that way (e.g. hand-edited block form).
+patch_flake_set_url() {
+  local name="$1" url="$2"
+
+  local perl_script
+  perl_script=$(
+    cat <<'PERL'
+    use strict;
+    use warnings;
+
+    my $n = $ENV{INPUT_NAME};
+    my $u = $ENV{INPUT_URL};
+
+    my $count = () = /^[ \t]*\Q$n\E\.url[ \t]*=[ \t]*".*?";[ \t]*$/mg;
+    die "inputMan: could not find '$n.url = \"...\";' line in flake.nix\n" unless $count;
+
+    s/^([ \t]*)\Q$n\E\.url[ \t]*=[ \t]*".*?";[ \t]*$/$1$n.url = "$u";/m;
+PERL
+  )
+
+  local err_file
+  err_file=$(mktemp)
+  if ! INPUT_NAME="$name" INPUT_URL="$url" perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
+    local err
+    err=$(cat "$err_file")
+    rm -f "$err_file"
+    die "Failed to patch flake.nix: ${err:-unknown patch error}"
+  fi
+
+  rm -f "$err_file"
+}
+
 # Read the set of pkg=alias pairs currently exposed by pkgs/inputs/<name>.nix.
 current_package_pairs() {
   local name="$1"
@@ -444,6 +500,16 @@ locked_input_field() {
   [[ -f flake.lock ]] || return 0
   jq -r --arg n "$name" --arg f "$field" \
     '(.nodes[$n].locked[$f] // empty) | tostring' flake.lock 2>/dev/null || true
+}
+
+# Read a field ("owner", "repo", "type", "ref", ...) from an input's `original`
+# node in flake.lock — i.e. what was requested, not what got resolved. Used to
+# rebuild a flake ref for pinning without inheriting any ref already baked in.
+original_input_field() {
+  local name="$1" field="$2"
+  [[ -f flake.lock ]] || return 0
+  jq -r --arg n "$name" --arg f "$field" \
+    '(.nodes[$n].original[$f] // empty) | tostring' flake.lock 2>/dev/null || true
 }
 
 # Human-sized form of a lock revision (git sha -> 7 chars, others verbatim).
@@ -703,7 +769,7 @@ next_news_num() {
 write_news_entry() {
   # headline_suffix lands in the first line of the message, which gignews uses
   # as the entry title — that's where a version bump is most useful.
-  local action="$1" name="$2" details="$3" headline_suffix="${4:-}"
+  local action="$1" name="$2" details="$3" headline_suffix="${4:-}" ref_label="${5:-}"
   local news_dir="news/entries"
 
   if [[ ! -d "$news_dir" ]]; then
@@ -736,6 +802,14 @@ write_news_entry() {
   remove)
     headline="Removed flake input '${name}'${headline_suffix}"
     body="This input was removed from gigpkgs by inputMan."
+    ;;
+  pin)
+    headline="Pinned flake input '${name}' to ${ref_label}${headline_suffix}"
+    body="This input was pinned to ${ref_label} by inputMan; it will keep tracking that ref until the next 'inputman update ${name}' or 'inputman pin ${name}'. Other gigpkgs inputs are unaffected."
+    ;;
+  branch)
+    headline="Switched flake input '${name}' to branch '${ref_label}'${headline_suffix}"
+    body="This input's tracked ref was changed to '${ref_label}' by inputMan; 'inputman update ${name}' will now follow that branch."
     ;;
   *)
     warn "Unknown news action '${action}'; skipping news entry."
@@ -1535,6 +1609,304 @@ cmd_remove() {
   finalize_commit "inputMan: remove input ${name}" "$auto_commit" "$no_commit"
 }
 
+# Resolve a github-type input's owner/repo from flake.lock's `original` node
+# (i.e. the un-resolved request, not whatever `locked` currently points at).
+# Dies if the input isn't locked yet or isn't a github-type input — pin/versions
+# only know how to build a `github:owner/repo/<ref>` flake ref.
+github_owner_repo() {
+  local name="$1" purpose="$2"
+  local otype owner repo
+  otype=$(original_input_field "$name" type)
+  [[ -n "$otype" ]] || die "Input '${name}' is not locked in flake.lock (run 'inputman update ${name}' first)"
+  [[ "$otype" == "github" ]] || die "inputman ${purpose} only supports github-type inputs (found '${otype}' for '${name}')"
+  owner=$(original_input_field "$name" owner)
+  repo=$(original_input_field "$name" repo)
+  [[ -n "$owner" && -n "$repo" ]] || die "Could not determine owner/repo for '${name}' from flake.lock"
+  # Trailing newline matters: callers consume this via `read -r o r < <(...)`,
+  # and `read` returns non-zero at EOF without one, which `set -e` would treat
+  # as a hard failure even though both variables were assigned correctly.
+  printf '%s %s\n' "$owner" "$repo"
+}
+
+cmd_pin() {
+  local name="" ref="" auto_commit="" no_commit=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    -*) die "Unknown option: $1" ;;
+    *)
+      if [[ -z "$name" ]]; then
+        name="$1"
+      elif [[ -z "$ref" ]]; then
+        ref="$1"
+      else
+        die "Usage: inputman pin <name> <ref> [options]"
+      fi
+      shift
+      ;;
+    esac
+  done
+
+  [[ -z "$name" || -z "$ref" ]] && die "Usage: inputman pin <name> <ref> [options]"
+  [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
+  [[ -f flake.lock ]] || die "No flake.lock found — run 'inputman update ${name}' first"
+
+  local owner repo
+  read -r owner repo < <(github_owner_repo "$name" "pin")
+  local override_url="github:${owner}/${repo}/${ref}"
+
+  local system
+  system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
+
+  local before_rev before_modified before_versions
+  before_rev=$(locked_input_field "$name" rev)
+  before_modified=$(locked_input_field "$name" lastModified)
+  info "Recording current versions of '${name}' ..."
+  before_versions=$(input_package_versions "$name" "$system")
+
+  info "Pinning input '${name}' to ${ref} (${override_url}) ..."
+  nix flake lock --override-input "$name" "$override_url"
+  ok "flake.lock updated for '${name}'"
+
+  local after_rev after_modified
+  after_rev=$(locked_input_field "$name" rev)
+  after_modified=$(locked_input_field "$name" lastModified)
+  if [[ -n "$before_rev" && "$before_rev" == "$after_rev" ]]; then
+    info "Revision unchanged: $(short_rev "$after_rev")"
+  else
+    ok "Revision: ${before_rev:+$(short_rev "$before_rev") -> }$(short_rev "${after_rev:-unknown}")"
+  fi
+
+  local after_versions
+  after_versions=$(input_package_versions "$name" "$system")
+
+  local -a version_lines=()
+  local change alias old_v new_v first_change=""
+  while IFS='|' read -r alias old_v new_v; do
+    [[ -z "$alias" ]] && continue
+    change=$(format_version_change "$alias" "$old_v" "$new_v")
+    version_lines+=("$change")
+    [[ -z "$first_change" ]] && first_change="${old_v:+${old_v} -> }${new_v}"
+    ok "Version: ${change}"
+  done < <(version_changes "$before_versions" "$after_versions")
+
+  local news_details="" headline_suffix=""
+  if [[ -n "$before_rev" && "$before_rev" == "$after_rev" ]]; then
+    news_details+="Already locked at $(short_rev "$after_rev")."$'\n'
+  else
+    [[ -n "$after_rev" ]] &&
+      news_details+="Revision: ${before_rev:+$(short_rev "$before_rev") -> }$(short_rev "$after_rev")"$'\n'
+    local before_date after_date
+    before_date=$(lock_date "$before_modified")
+    after_date=$(lock_date "$after_modified")
+    [[ -n "$after_date" ]] &&
+      news_details+="Upstream date: ${before_date:+${before_date} -> }${after_date}"$'\n'
+  fi
+  if [[ ${#version_lines[@]} -gt 0 ]]; then
+    news_details+="Versions:"$'\n'
+    for change in "${version_lines[@]}"; do
+      news_details+="  ${change}"$'\n'
+    done
+    [[ ${#version_lines[@]} -eq 1 ]] && headline_suffix=" (${first_change})"
+  fi
+
+  local news_file
+  news_file=$(write_news_entry pin "$name" "$news_details" "$headline_suffix" "$ref") || news_file=""
+
+  git add flake.lock
+  [[ -n "$news_file" ]] && git add "$news_file"
+  finalize_commit "inputMan: pin input ${name} to ${ref}" "$auto_commit" "$no_commit"
+}
+
+cmd_versions() {
+  local name="" limit=25
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --limit)
+      limit="$2"
+      shift 2
+      ;;
+    -*) die "Unknown option: $1" ;;
+    *)
+      if [[ -n "$name" ]]; then
+        die "Only one input name may be provided"
+      fi
+      name="$1"
+      shift
+      ;;
+    esac
+  done
+
+  [[ -z "$name" ]] && die "Usage: inputman versions <name> [--limit N]"
+  [[ -f flake.lock ]] || die "No flake.lock found — run 'inputman update ${name}' first"
+
+  local owner repo
+  read -r owner repo < <(github_owner_repo "$name" "versions")
+
+  local current_rev
+  current_rev=$(locked_input_field "$name" rev)
+
+  info "Fetching tags for github:${owner}/${repo} ..."
+
+  local -A tag_rev=()
+  local raw_rev raw_ref tag
+  while IFS=$'\t' read -r raw_rev raw_ref; do
+    [[ "$raw_ref" == refs/tags/* ]] || continue
+    tag="${raw_ref#refs/tags/}"
+    if [[ "$tag" == *^\{\} ]]; then
+      tag="${tag%^\{\}}"
+      tag_rev["$tag"]="$raw_rev" # peeled commit sha wins over the tag object sha
+    elif [[ -z "${tag_rev[$tag]:-}" ]]; then
+      tag_rev["$tag"]="$raw_rev"
+    fi
+  done < <(git ls-remote --tags "https://github.com/${owner}/${repo}.git" 2>/dev/null)
+
+  [[ ${#tag_rev[@]} -eq 0 ]] && die "No tags found for github:${owner}/${repo}"
+
+  local -a sorted_tags=()
+  while IFS= read -r tag; do
+    sorted_tags+=("$tag")
+  done < <(printf '%s\n' "${!tag_rev[@]}" | sort -V)
+
+  local total=${#sorted_tags[@]} start=0
+  ((total > limit)) && start=$((total - limit))
+
+  local i rev marker
+  for ((i = start; i < total; i++)); do
+    tag="${sorted_tags[$i]}"
+    rev="${tag_rev[$tag]}"
+    marker=""
+    [[ -n "$current_rev" && "$rev" == "$current_rev" ]] && marker="  <- currently locked"
+    printf '  %-20s %s%s\n' "$tag" "$(short_rev "$rev")" "$marker"
+  done
+
+  info "Pin with: inputman pin ${name} <tag>"
+}
+
+cmd_branch() {
+  local name="" branch="" auto_commit="" no_commit=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    -*) die "Unknown option: $1" ;;
+    *)
+      if [[ -z "$name" ]]; then
+        name="$1"
+      elif [[ -z "$branch" ]]; then
+        branch="$1"
+      else
+        die "Usage: inputman branch <name> [branch] [options]"
+      fi
+      shift
+      ;;
+    esac
+  done
+
+  [[ -z "$name" ]] && die "Usage: inputman branch <name> [branch] [options]"
+  [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
+  [[ -f flake.lock ]] || die "No flake.lock found — run 'inputman update ${name}' first"
+
+  local owner repo
+  read -r owner repo < <(github_owner_repo "$name" "branch")
+
+  if [[ -z "$branch" ]]; then
+    command -v fzf >/dev/null 2>&1 ||
+      die "fzf is required for interactive branch selection (or pass a branch name directly: inputman branch ${name} <branch>)"
+
+    info "Fetching branches for github:${owner}/${repo} ..."
+    local -a branches=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && branches+=("$line")
+    done < <(git ls-remote --heads "https://github.com/${owner}/${repo}.git" 2>/dev/null |
+      awk '{print $2}' | sed 's#^refs/heads/##' | sort)
+
+    [[ ${#branches[@]} -eq 0 ]] && die "No branches found for github:${owner}/${repo}"
+
+    branch=$(printf '%s\n' "${branches[@]}" |
+      fzf --prompt="${name} branch> " --height=~40% --reverse) || true
+    [[ -z "$branch" ]] && die "No branch selected."
+  fi
+
+  local new_url="github:${owner}/${repo}/${branch}"
+
+  local system
+  system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
+
+  local before_rev before_modified before_versions
+  before_rev=$(locked_input_field "$name" rev)
+  before_modified=$(locked_input_field "$name" lastModified)
+  info "Recording current versions of '${name}' ..."
+  before_versions=$(input_package_versions "$name" "$system")
+
+  info "Switching input '${name}' to branch '${branch}' (${new_url}) ..."
+  patch_flake_set_url "$name" "$new_url"
+  if ! nix flake update "$name"; then
+    git checkout -- flake.nix >/dev/null 2>&1 || true
+    die "Failed to relock '${name}' against branch '${branch}'; rolled back flake.nix."
+  fi
+  ok "flake.nix and flake.lock updated for '${name}'"
+
+  local after_rev after_modified
+  after_rev=$(locked_input_field "$name" rev)
+  after_modified=$(locked_input_field "$name" lastModified)
+  ok "Revision: ${before_rev:+$(short_rev "$before_rev") -> }$(short_rev "${after_rev:-unknown}")"
+
+  local after_versions
+  after_versions=$(input_package_versions "$name" "$system")
+
+  local -a version_lines=()
+  local change alias old_v new_v first_change=""
+  while IFS='|' read -r alias old_v new_v; do
+    [[ -z "$alias" ]] && continue
+    change=$(format_version_change "$alias" "$old_v" "$new_v")
+    version_lines+=("$change")
+    [[ -z "$first_change" ]] && first_change="${old_v:+${old_v} -> }${new_v}"
+    ok "Version: ${change}"
+  done < <(version_changes "$before_versions" "$after_versions")
+
+  local news_details="Branch: ${branch}"$'\n'
+  [[ -n "$after_rev" ]] &&
+    news_details+="Revision: ${before_rev:+$(short_rev "$before_rev") -> }$(short_rev "$after_rev")"$'\n'
+  local before_date after_date
+  before_date=$(lock_date "$before_modified")
+  after_date=$(lock_date "$after_modified")
+  [[ -n "$after_date" ]] &&
+    news_details+="Upstream date: ${before_date:+${before_date} -> }${after_date}"$'\n'
+
+  local headline_suffix=""
+  if [[ ${#version_lines[@]} -gt 0 ]]; then
+    news_details+="Versions:"$'\n'
+    for change in "${version_lines[@]}"; do
+      news_details+="  ${change}"$'\n'
+    done
+    [[ ${#version_lines[@]} -eq 1 ]] && headline_suffix=" (${first_change})"
+  fi
+
+  local news_file
+  news_file=$(write_news_entry branch "$name" "$news_details" "$headline_suffix" "$branch") || news_file=""
+
+  git add flake.nix flake.lock
+  [[ -n "$news_file" ]] && git add "$news_file"
+  finalize_commit "inputMan: switch input ${name} to branch ${branch}" "$auto_commit" "$no_commit"
+}
+
 # Run pre-commit on all files (letting hooks reformat), re-stage the files
 # inputman touched, then commit.  Falls back to a plain commit if pre-commit
 # is not installed or has no config.
@@ -1567,6 +1939,18 @@ remove)
   shift
   cmd_remove "$@"
   ;;
+pin)
+  shift
+  cmd_pin "$@"
+  ;;
+versions)
+  shift
+  cmd_versions "$@"
+  ;;
+branch)
+  shift
+  cmd_branch "$@"
+  ;;
 __infer-name)
   shift
   [[ $# -eq 1 ]] || die "Usage: inputman __infer-name <url>"
@@ -1597,6 +1981,11 @@ __patch-flake-remove)
   shift
   [[ $# -eq 1 ]] || die "Usage: inputman __patch-flake-remove <name>"
   patch_flake_remove "$1"
+  ;;
+__patch-flake-set-url)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __patch-flake-set-url <name> <url>"
+  patch_flake_set_url "$1" "$2"
   ;;
 __parse-packages-spec)
   shift
