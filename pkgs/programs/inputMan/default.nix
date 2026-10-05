@@ -21,6 +21,7 @@ let
             pkgs.jq
             pkgs.perl
             pkgs.pre-commit
+            pkgs.fzf
           ]
         }
     '';
@@ -50,6 +51,9 @@ pkg
           grep -q "install <url>" help_output
           grep -q "update <name>" help_output
           grep -q "remove <name>" help_output
+          grep -q -- "pin <name> <ref>" help_output
+          grep -q -- "versions <name>" help_output
+          grep -q -- "branch <name>" help_output
           grep -q -- "--follows" help_output
           grep -q -- "--packages, -p" help_output
           grep -q -- "--no-info" help_output
@@ -337,7 +341,48 @@ pkg
           command -v git > /dev/null
           command -v jq > /dev/null
           command -v perl > /dev/null
+          command -v fzf > /dev/null
           echo "Runtime dependencies verified" > $out
+        '';
+
+    patch-flake-set-url =
+      pkgs.runCommand "inputman-patch-flake-set-url-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          cat > flake.nix <<'FLAKE'
+          {
+              inputs = {
+                  nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+                  roll-flow.url = "github:gignsky/roll-flow";
+                  roll-flow.inputs.nixpkgs.follows = "nixpkgs";
+              };
+              outputs = { self, ... }: { };
+          }
+          FLAKE
+
+          inputman __patch-flake-set-url roll-flow github:gignsky/roll-flow/some-branch
+
+          grep -q 'roll-flow.url = "github:gignsky/roll-flow/some-branch";' flake.nix
+          grep -q 'roll-flow.inputs.nixpkgs.follows = "nixpkgs";' flake.nix
+          grep -q 'nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";' flake.nix
+
+          if inputman __patch-flake-set-url not-an-input github:foo/bar > output 2>&1; then
+            echo "Setting url for a missing input should fail"
+            cat output
+            exit 1
+          fi
+          grep -q "could not find" output
+
+          echo "patch_flake_set_url verified" > $out
         '';
 
     shellcheck =
