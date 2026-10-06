@@ -41,6 +41,8 @@
     roll-flow-0_2_6-dev.url = "github:gignsky/roll-flow/ec731b2deb8c5f5d9f518563e548e08f4fd593aa";
 
     roll-flow-0_2_7.url = "github:gignsky/roll-flow/7d42a7f97bf9404e17a2b52580fcbd3bf3f9513c";
+
+    roll-flow-0_2_8.url = "github:gignsky/roll-flow/f64328f0b40819617b3933f6f15f88ff12f3fa1c";
 };
 
   outputs =
