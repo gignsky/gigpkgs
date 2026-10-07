@@ -1723,7 +1723,7 @@
         ],
         "nixos-unstable": "nixos-unstable_2",
         "nixpkgs": [
-          "nixpkgs-master"
+          "nixos-unstable"
         ],
         "nixpkgs-master": [
           "nixpkgs-unstable"
