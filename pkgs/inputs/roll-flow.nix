@@ -7,4 +7,5 @@
   "roll-flow-0.2.7" = inputs.roll-flow-0_2_7.packages.${system}.default;
   "roll-flow-0.2.8" = inputs.roll-flow-0_2_8.packages.${system}.default;
   "roll-flow-0.2.9" = inputs.roll-flow-0_2_9.packages.${system}.default;
+  "roll-flow-0.2.9-dev" = inputs.roll-flow-0_2_9-dev.packages.${system}.default;
 }
