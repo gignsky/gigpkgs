@@ -9,4 +9,5 @@
   "roll-flow-0.2.9" = inputs.roll-flow-0_2_9.packages.${system}.default;
   "roll-flow-0.2.9-dev" = inputs.roll-flow-0_2_9-dev.packages.${system}.default;
   "roll-flow-0.2.10" = inputs.roll-flow-0_2_10.packages.${system}.default;
+  "roll-flow-0.2.11" = inputs.roll-flow-0_2_11.packages.${system}.default;
 }
