@@ -41,6 +41,20 @@
       "versions": {
         "roll-flow": "0.2.9-dev"
       }
+    },
+    {
+      "rev": "16b516238a9d4f041c02ce6f049665332bd341bb",
+      "date": "2026-10-13",
+      "versions": {
+        "roll-flow": "0.2.10"
+      }
+    },
+    {
+      "rev": "ef98701c006cf8693038485a6be227ad1d501fe8",
+      "date": "2026-10-13",
+      "versions": {
+        "roll-flow": "0.2.11"
+      }
     }
   ]
 }
