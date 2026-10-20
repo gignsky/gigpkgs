@@ -2,12 +2,12 @@
 #
 # Each channel branch is the trunk with the channel marker rewritten
 # (channel.nix), the top-level `nixpkgs` input repointed at that channel
-# (flake.nix), and the lock refreshed to match (flake.lock). This workflow, on
-# every push to the trunk, gates on a bare-minimum `nix flake check`, then for
-# each channel rewrites those files and force-pushes to the derived branch. So a
-# consumer of e.g. gigos-26.05 gets gigpkgs' overlays on top of a `nixpkgs`
-# input that IS nixos-2605 — not just channel-aware outputs. No source drift, no
-# merge maintenance — the branches stay pure projections of the trunk.
+# (flake.nix), and the lock refreshed to match (flake.lock). This workflow gates
+# on a bare-minimum `nix flake check`, then for each channel rewrites those
+# files and force-pushes to the derived branch. So a consumer of e.g.
+# gigos-26.05 gets gigpkgs' overlays on top of a `nixpkgs` input that IS
+# nixos-2605 — not just channel-aware outputs. No source drift, no merge
+# maintenance — the branches stay pure projections of whichever trunk backs them.
 #
 # Two branch families are derived from the same channels so downstream consumers
 # can pin whichever name they prefer:
@@ -15,13 +15,23 @@
 #   gigpkgs-<channel>  (repo-matching name)
 # Both in a family point at the same base nixpkgs channel.
 #
-# Triggers on both `main` and `master` so the planned trunk rename
-# (main -> master, per gigpkgs#14) needs no flag-day change here.
+# Not every channel branch is projected from the same trunk: the "-unstable"
+# branches (gigos-unstable, gigpkgs-unstable) are projected from `rolling` —
+# gigpkgs' own bleeding-edge trunk — so a consumer pinned to them (e.g.
+# dotfiles' `pkgs.unstable`) sees gigpkgs packages (like roll-flow) at whatever
+# version is currently on `rolling`, ahead of promotion to master. The
+# non-unstable channel branches (gigos-2605) are projected from `master`, the
+# promoted/stable trunk. See `rolling_to_main_gates` in .roll-flow.toml for how
+# rolling gets promoted to master.
+#
+# Triggers on `main`, `master`, and `rolling` so the planned trunk rename
+# (main -> master, per gigpkgs#14) needs no flag-day change here, and so the
+# rolling-sourced channels get projected on every push to rolling.
 name: channels
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, rolling]
   pull_request:
   workflow_dispatch:
 
@@ -45,26 +55,25 @@ jobs:
       - name: flake check (eval gate)
         run: nix flake check --no-build --accept-flake-config
 
-  derive:
+  # Projects the non-unstable channel branches (gigos-2605) from the
+  # promoted/stable trunk (main / master).
+  derive-stable:
     needs: check
-    # Project onto channel branches on a real trunk push, or a manual dispatch
-    # (so the derive can be tested on demand). NEVER on PRs — we don't derive
-    # channel branches from unmerged code.
+    # Project onto channel branches on a real push to the stable trunk, or a
+    # manual dispatch against it (so the derive can be tested on demand).
+    # NEVER on PRs — we don't derive channel branches from unmerged code.
     if: >-
       (github.event_name == 'push'
         && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
-      || github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'workflow_dispatch'
+        && (github.ref_name == 'main' || github.ref_name == 'master'))
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - branch: gigos-unstable
-            channel: nixos-unstable
           - branch: gigos-2605
             channel: nixos-2605
-          - branch: gigpkgs-unstable
-            channel: nixpkgs-unstable
           # gigos-stable / gigpkgs-stable are NOT plain derives — stable is a
           # gated promotion (Hydra, gigpkgs#17). Intentionally excluded here.
     steps:
@@ -93,6 +102,75 @@ jobs:
           # 2. Repoint the top-level `nixpkgs` input at this channel's nixpkgs, so
           #    a consumer of the derived branch gets `nixpkgs = <channel>` directly
           #    (e.g. gigpkgs-26.05 -> nixpkgs IS nixos-2605), not merely
+          #    channel-aware outputs. The `inputs` block cannot read channel.nix
+          #    itself, so the projection rewrites it here. Anchored to the
+          #    top-level binding so the nested `inputs.nixpkgs.follows = …` lines
+          #    (home-manager, pre-commit) are left untouched. Fail loudly if the
+          #    trunk line ever moves or reformats, rather than silently skipping.
+          matched=$(grep -cE '^[[:space:]]*nixpkgs\.follows = "[^"]*";' flake.nix || true)
+          if [ "$matched" -ne 1 ]; then
+            echo "::error::expected exactly one top-level 'nixpkgs.follows' line in flake.nix, found $matched"
+            exit 1
+          fi
+          sed -i -E 's|^([[:space:]]*)nixpkgs\.follows = "[^"]*";|\1nixpkgs.follows = "${{ matrix.channel }}";|' flake.nix
+          grep -qE "^[[:space:]]*nixpkgs\.follows = \"${{ matrix.channel }}\";" flake.nix
+
+          # 3. Relock so flake.lock reflects the repointed nixpkgs input and picks
+          #    up any missing flake=false siblings (e.g. channel-aware roll-flow).
+          #    `nix flake lock` only adds missing or changed entries.
+          nix flake lock --accept-flake-config
+
+          git add channel.nix flake.nix flake.lock
+          git commit -m "derive(${{ matrix.branch }}): channel=${{ matrix.channel }} @ ${{ github.sha }}"
+          git push --force-with-lease origin "HEAD:refs/heads/${{ matrix.branch }}"
+
+  # Projects the "-unstable" channel branches (gigos-unstable, gigpkgs-unstable)
+  # from `rolling` — gigpkgs' own bleeding-edge trunk — so consumers pinned to
+  # them see gigpkgs packages at whatever version is currently on rolling,
+  # ahead of promotion to master.
+  derive-unstable:
+    needs: check
+    # Project onto channel branches on a real push to rolling, or a manual
+    # dispatch against it (so the derive can be tested on demand). NEVER on
+    # PRs — we don't derive channel branches from unmerged code.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/rolling')
+      || (github.event_name == 'workflow_dispatch' && github.ref_name == 'rolling')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - branch: gigos-unstable
+            channel: nixos-unstable
+          - branch: gigpkgs-unstable
+            channel: nixpkgs-unstable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Project trunk onto ${{ matrix.branch }} (channel=${{ matrix.channel }})
+        run: |
+          set -euo pipefail
+          git config user.name  "gigpkgs-bot"
+          git config user.email "gigpkgs-bot@users.noreply.github.com"
+
+          # 1. Overwrite the channel marker (drives base + selection logic).
+          {
+            printf '# CI-derived from %s (%s) — do not edit.\n' "${{ github.ref_name }}" "${{ github.sha }}"
+            printf '# Regenerated on every push to rolling by .github/workflows/channels.yml\n'
+            printf '"%s"\n' "${{ matrix.channel }}"
+          } > channel.nix
+
+          # 2. Repoint the top-level `nixpkgs` input at this channel's nixpkgs, so
+          #    a consumer of the derived branch gets `nixpkgs = <channel>` directly
+          #    (e.g. gigpkgs-unstable -> nixpkgs IS nixpkgs-unstable), not merely
           #    channel-aware outputs. The `inputs` block cannot read channel.nix
           #    itself, so the projection rewrites it here. Anchored to the
           #    top-level binding so the nested `inputs.nixpkgs.follows = …` lines
