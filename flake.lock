@@ -85,6 +85,22 @@
         "type": "github"
       }
     },
+    "flake-compat_13": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1767039857,
+        "narHash": "sha256-vNpUSpF5Nuw8xvDLj2KCwwksIbjua2LZCqhV1LNRDns=",
+        "owner": "NixOS",
+        "repo": "flake-compat",
+        "rev": "5edf11c44bc78a0d334f6334cdaf7d60d732daab",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "flake-compat",
+        "type": "github"
+      }
+    },
     "flake-compat_2": {
       "flake": false,
       "locked": {
@@ -362,6 +378,29 @@
     "gitignore_10": {
       "inputs": {
         "nixpkgs": [
+          "roll-flow-0_2_9",
+          "nixpkgs",
+          "pre-commit-hooks",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1709087332,
+        "narHash": "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs=",
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "rev": "637db329424fd7e46cf4185293b9cc8c88c95394",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "type": "github"
+      }
+    },
+    "gitignore_11": {
+      "inputs": {
+        "nixpkgs": [
           "roll-flow-0_2_9-dev",
           "nixpkgs",
           "pre-commit-hooks",
@@ -454,7 +493,7 @@
     "gitignore_5": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_5",
+          "roll-flow-0_2_12-dev",
           "nixpkgs",
           "pre-commit-hooks",
           "nixpkgs"
@@ -477,7 +516,7 @@
     "gitignore_6": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_6-dev",
+          "roll-flow-0_2_5",
           "nixpkgs",
           "pre-commit-hooks",
           "nixpkgs"
@@ -500,7 +539,7 @@
     "gitignore_7": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_7",
+          "roll-flow-0_2_6-dev",
           "nixpkgs",
           "pre-commit-hooks",
           "nixpkgs"
@@ -523,7 +562,7 @@
     "gitignore_8": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_8",
+          "roll-flow-0_2_7",
           "nixpkgs",
           "pre-commit-hooks",
           "nixpkgs"
@@ -546,7 +585,7 @@
     "gitignore_9": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_9",
+          "roll-flow-0_2_8",
           "nixpkgs",
           "pre-commit-hooks",
           "nixpkgs"
@@ -592,7 +631,7 @@
     "home-manager_10": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_9",
+          "roll-flow-0_2_8",
           "nixpkgs",
           "nixos-2605"
         ]
@@ -613,6 +652,29 @@
       }
     },
     "home-manager_11": {
+      "inputs": {
+        "nixpkgs": [
+          "roll-flow-0_2_9",
+          "nixpkgs",
+          "nixos-2605"
+        ]
+      },
+      "locked": {
+        "lastModified": 1781124985,
+        "narHash": "sha256-hIaUkf6qalGk2xxNEkBMP2m2aPBq+qXvUPOIwwEDySI=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "d899b01766784bcc9a141ee13bad6dc689d47c37",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "ref": "release-26.05",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
+    "home-manager_12": {
       "inputs": {
         "nixpkgs": [
           "roll-flow-0_2_9-dev",
@@ -728,7 +790,7 @@
     "home-manager_6": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_5",
+          "roll-flow-0_2_12-dev",
           "nixpkgs",
           "nixos-2605"
         ]
@@ -751,7 +813,7 @@
     "home-manager_7": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_6-dev",
+          "roll-flow-0_2_5",
           "nixpkgs",
           "nixos-2605"
         ]
@@ -774,7 +836,7 @@
     "home-manager_8": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_7",
+          "roll-flow-0_2_6-dev",
           "nixpkgs",
           "nixos-2605"
         ]
@@ -797,7 +859,7 @@
     "home-manager_9": {
       "inputs": {
         "nixpkgs": [
-          "roll-flow-0_2_8",
+          "roll-flow-0_2_7",
           "nixpkgs",
           "nixos-2605"
         ]
@@ -888,6 +950,22 @@
       }
     },
     "nixos-2605_11": {
+      "locked": {
+        "lastModified": 1780902259,
+        "narHash": "sha256-q8yYEC5f1mFlQO9RGna4LTc9QrcvWunX6FYp83munkQ=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "bd0ff2d3eac24699c3664d5966b9ef36f388e2ca",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixos-2605_12": {
       "locked": {
         "lastModified": 1780902259,
         "narHash": "sha256-q8yYEC5f1mFlQO9RGna4LTc9QrcvWunX6FYp83munkQ=",
@@ -1064,6 +1142,22 @@
       }
     },
     "nixos-unstable_11": {
+      "locked": {
+        "lastModified": 1780749050,
+        "narHash": "sha256-3av0pIjlOWQ6rDbNOmpUSvbNnJkGORQKKjb4LtCZsIY=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "a799d3e3886da994fa307f817a6bc705ae538eeb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixos-unstable_12": {
       "locked": {
         "lastModified": 1780749050,
         "narHash": "sha256-3av0pIjlOWQ6rDbNOmpUSvbNnJkGORQKKjb4LtCZsIY=",
@@ -1271,6 +1365,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-unstable_12": {
+      "locked": {
+        "lastModified": 1781136106,
+        "narHash": "sha256-lXUh1lC8t98IZNpzAg9J+S4/K/sh1/usMmrIHfUtT2I=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "d9c4084332a1f90837df2ae0ff8e2b6634ae3f2e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "master",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixpkgs-unstable_2": {
       "locked": {
         "lastModified": 1791838913,
@@ -1404,18 +1514,18 @@
         "home-manager": "home-manager_9",
         "nixos-2605": "nixos-2605_9",
         "nixos-stable": [
-          "roll-flow-0_2_8",
+          "roll-flow-0_2_7",
           "nixpkgs",
           "nixos-2605"
         ],
         "nixos-unstable": "nixos-unstable_9",
         "nixpkgs": [
-          "roll-flow-0_2_8",
+          "roll-flow-0_2_7",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
         "nixpkgs-master": [
-          "roll-flow-0_2_8",
+          "roll-flow-0_2_7",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
@@ -1442,18 +1552,18 @@
         "home-manager": "home-manager_10",
         "nixos-2605": "nixos-2605_10",
         "nixos-stable": [
-          "roll-flow-0_2_9",
+          "roll-flow-0_2_8",
           "nixpkgs",
           "nixos-2605"
         ],
         "nixos-unstable": "nixos-unstable_10",
         "nixpkgs": [
-          "roll-flow-0_2_9",
+          "roll-flow-0_2_8",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
         "nixpkgs-master": [
-          "roll-flow-0_2_9",
+          "roll-flow-0_2_8",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
@@ -1480,11 +1590,49 @@
         "home-manager": "home-manager_11",
         "nixos-2605": "nixos-2605_11",
         "nixos-stable": [
-          "roll-flow-0_2_9-dev",
+          "roll-flow-0_2_9",
           "nixpkgs",
           "nixos-2605"
         ],
         "nixos-unstable": "nixos-unstable_11",
+        "nixpkgs": [
+          "roll-flow-0_2_9",
+          "nixpkgs",
+          "nixpkgs-unstable"
+        ],
+        "nixpkgs-master": [
+          "roll-flow-0_2_9",
+          "nixpkgs",
+          "nixpkgs-unstable"
+        ],
+        "nixpkgs-unstable": "nixpkgs-unstable_11",
+        "pre-commit-hooks": "pre-commit-hooks_11"
+      },
+      "locked": {
+        "lastModified": 1784602235,
+        "narHash": "sha256-O4TnrMzr6BYjI0mkYHMi6ijRm/yeAPe8X4nO8Ez4Z9k=",
+        "owner": "gignsky",
+        "repo": "gigpkgs",
+        "rev": "3b497aad06a1c4cce34760716210cad3df6e8e84",
+        "type": "github"
+      },
+      "original": {
+        "owner": "gignsky",
+        "ref": "gigpkgs-unstable",
+        "repo": "gigpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_13": {
+      "inputs": {
+        "home-manager": "home-manager_12",
+        "nixos-2605": "nixos-2605_12",
+        "nixos-stable": [
+          "roll-flow-0_2_9-dev",
+          "nixpkgs",
+          "nixos-2605"
+        ],
+        "nixos-unstable": "nixos-unstable_12",
         "nixpkgs": [
           "roll-flow-0_2_9-dev",
           "nixpkgs",
@@ -1495,8 +1643,8 @@
           "nixpkgs",
           "nixpkgs-unstable"
         ],
-        "nixpkgs-unstable": "nixpkgs-unstable_11",
-        "pre-commit-hooks": "pre-commit-hooks_11"
+        "nixpkgs-unstable": "nixpkgs-unstable_12",
+        "pre-commit-hooks": "pre-commit-hooks_12"
       },
       "locked": {
         "lastModified": 1784602235,
@@ -1687,18 +1835,18 @@
         "home-manager": "home-manager_6",
         "nixos-2605": "nixos-2605_6",
         "nixos-stable": [
-          "roll-flow-0_2_5",
+          "roll-flow-0_2_12-dev",
           "nixpkgs",
           "nixos-2605"
         ],
         "nixos-unstable": "nixos-unstable_6",
         "nixpkgs": [
-          "roll-flow-0_2_5",
+          "roll-flow-0_2_12-dev",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
         "nixpkgs-master": [
-          "roll-flow-0_2_5",
+          "roll-flow-0_2_12-dev",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
@@ -1725,18 +1873,18 @@
         "home-manager": "home-manager_7",
         "nixos-2605": "nixos-2605_7",
         "nixos-stable": [
-          "roll-flow-0_2_6-dev",
+          "roll-flow-0_2_5",
           "nixpkgs",
           "nixos-2605"
         ],
         "nixos-unstable": "nixos-unstable_7",
         "nixpkgs": [
-          "roll-flow-0_2_6-dev",
+          "roll-flow-0_2_5",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
         "nixpkgs-master": [
-          "roll-flow-0_2_6-dev",
+          "roll-flow-0_2_5",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
@@ -1763,18 +1911,18 @@
         "home-manager": "home-manager_8",
         "nixos-2605": "nixos-2605_8",
         "nixos-stable": [
-          "roll-flow-0_2_7",
+          "roll-flow-0_2_6-dev",
           "nixpkgs",
           "nixos-2605"
         ],
         "nixos-unstable": "nixos-unstable_8",
         "nixpkgs": [
-          "roll-flow-0_2_7",
+          "roll-flow-0_2_6-dev",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
         "nixpkgs-master": [
-          "roll-flow-0_2_7",
+          "roll-flow-0_2_6-dev",
           "nixpkgs",
           "nixpkgs-unstable"
         ],
@@ -1851,7 +1999,7 @@
         "flake-compat": "flake-compat_11",
         "gitignore": "gitignore_9",
         "nixpkgs": [
-          "roll-flow-0_2_9",
+          "roll-flow-0_2_8",
           "nixpkgs",
           "nixpkgs"
         ]
@@ -1874,6 +2022,30 @@
       "inputs": {
         "flake-compat": "flake-compat_12",
         "gitignore": "gitignore_10",
+        "nixpkgs": [
+          "roll-flow-0_2_9",
+          "nixpkgs",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1778507602,
+        "narHash": "sha256-kTwur1wV+01SdqskVMSo6JMEpg71ps3HpbFY2GsflKs=",
+        "owner": "cachix",
+        "repo": "git-hooks.nix",
+        "rev": "61ab0e80d9c7ab14c256b5b453d8b3fb0189ba0a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cachix",
+        "repo": "git-hooks.nix",
+        "type": "github"
+      }
+    },
+    "pre-commit-hooks_12": {
+      "inputs": {
+        "flake-compat": "flake-compat_13",
+        "gitignore": "gitignore_11",
         "nixpkgs": [
           "roll-flow-0_2_9-dev",
           "nixpkgs",
@@ -1992,7 +2164,7 @@
         "flake-compat": "flake-compat_7",
         "gitignore": "gitignore_5",
         "nixpkgs": [
-          "roll-flow-0_2_5",
+          "roll-flow-0_2_12-dev",
           "nixpkgs",
           "nixpkgs"
         ]
@@ -2016,7 +2188,7 @@
         "flake-compat": "flake-compat_8",
         "gitignore": "gitignore_6",
         "nixpkgs": [
-          "roll-flow-0_2_6-dev",
+          "roll-flow-0_2_5",
           "nixpkgs",
           "nixpkgs"
         ]
@@ -2040,7 +2212,7 @@
         "flake-compat": "flake-compat_9",
         "gitignore": "gitignore_7",
         "nixpkgs": [
-          "roll-flow-0_2_7",
+          "roll-flow-0_2_6-dev",
           "nixpkgs",
           "nixpkgs"
         ]
@@ -2064,7 +2236,7 @@
         "flake-compat": "flake-compat_10",
         "gitignore": "gitignore_8",
         "nixpkgs": [
-          "roll-flow-0_2_8",
+          "roll-flow-0_2_7",
           "nixpkgs",
           "nixpkgs"
         ]
@@ -2093,16 +2265,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1791875216,
-        "narHash": "sha256-cHLXZLC5J0kx8sSWfAoqyu8ijUd3ZgnRB1awDh0uWtY=",
+        "lastModified": 1792517448,
+        "narHash": "sha256-pRctMVv8oJp40V9x7ysW4kof6eFAI0MrlWvPpzLbyq8=",
         "owner": "gignsky",
         "repo": "roll-flow",
-        "rev": "ef98701c006cf8693038485a6be227ad1d501fe8",
+        "rev": "8fb70226565442e2326ede9d7c0c658764c34045",
         "type": "github"
       },
       "original": {
         "owner": "gignsky",
-        "ref": "main",
+        "ref": "develop",
         "repo": "roll-flow",
         "type": "github"
       }
@@ -2155,9 +2327,33 @@
         "type": "github"
       }
     },
-    "roll-flow-0_2_5": {
+    "roll-flow-0_2_12-dev": {
       "inputs": {
         "nixpkgs": "nixpkgs_7",
+        "pre-commit-hooks": [
+          "roll-flow-0_2_12-dev",
+          "nixpkgs",
+          "pre-commit-hooks"
+        ]
+      },
+      "locked": {
+        "lastModified": 1792517448,
+        "narHash": "sha256-pRctMVv8oJp40V9x7ysW4kof6eFAI0MrlWvPpzLbyq8=",
+        "owner": "gignsky",
+        "repo": "roll-flow",
+        "rev": "8fb70226565442e2326ede9d7c0c658764c34045",
+        "type": "github"
+      },
+      "original": {
+        "owner": "gignsky",
+        "repo": "roll-flow",
+        "rev": "8fb70226565442e2326ede9d7c0c658764c34045",
+        "type": "github"
+      }
+    },
+    "roll-flow-0_2_5": {
+      "inputs": {
+        "nixpkgs": "nixpkgs_8",
         "pre-commit-hooks": [
           "roll-flow-0_2_5",
           "nixpkgs",
@@ -2181,7 +2377,7 @@
     },
     "roll-flow-0_2_6-dev": {
       "inputs": {
-        "nixpkgs": "nixpkgs_8",
+        "nixpkgs": "nixpkgs_9",
         "pre-commit-hooks": [
           "roll-flow-0_2_6-dev",
           "nixpkgs",
@@ -2205,7 +2401,7 @@
     },
     "roll-flow-0_2_7": {
       "inputs": {
-        "nixpkgs": "nixpkgs_9",
+        "nixpkgs": "nixpkgs_10",
         "pre-commit-hooks": [
           "roll-flow-0_2_7",
           "nixpkgs",
@@ -2229,7 +2425,7 @@
     },
     "roll-flow-0_2_8": {
       "inputs": {
-        "nixpkgs": "nixpkgs_10",
+        "nixpkgs": "nixpkgs_11",
         "pre-commit-hooks": [
           "roll-flow-0_2_8",
           "nixpkgs",
@@ -2253,7 +2449,7 @@
     },
     "roll-flow-0_2_9": {
       "inputs": {
-        "nixpkgs": "nixpkgs_11",
+        "nixpkgs": "nixpkgs_12",
         "pre-commit-hooks": [
           "roll-flow-0_2_9",
           "nixpkgs",
@@ -2277,7 +2473,7 @@
     },
     "roll-flow-0_2_9-dev": {
       "inputs": {
-        "nixpkgs": "nixpkgs_12",
+        "nixpkgs": "nixpkgs_13",
         "pre-commit-hooks": [
           "roll-flow-0_2_9-dev",
           "nixpkgs",
@@ -2321,6 +2517,7 @@
         "roll-flow": "roll-flow",
         "roll-flow-0_2_10": "roll-flow-0_2_10",
         "roll-flow-0_2_11": "roll-flow-0_2_11",
+        "roll-flow-0_2_12-dev": "roll-flow-0_2_12-dev",
         "roll-flow-0_2_5": "roll-flow-0_2_5",
         "roll-flow-0_2_6-dev": "roll-flow-0_2_6-dev",
         "roll-flow-0_2_7": "roll-flow-0_2_7",
