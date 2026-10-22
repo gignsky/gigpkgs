@@ -61,6 +61,7 @@ pkg
           grep -q -- "--no-modules" help_output
           grep -q -- "--no-commit" help_output
           grep -q "doctor" help_output
+          grep -q -- "--no-containers" help_output
           grep -q -- "--no-auto-follows" help_output
 
           echo "Help output verified" > $out
@@ -602,6 +603,40 @@ pkg
           nixfmt --check out.nix
 
           echo "generated aggregator passes nixfmt" > $out
+        '';
+
+    generate-container-file =
+      pkgs.runCommand "inputman-generate-container-file-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+            pkgs.nixfmt
+          ];
+        }
+        ''
+          set -e
+          inputman __generate-container-file giglab-dev giglab=giglab "giglab=giglab-0.0.1" > out.nix
+          grep -q '^{ inputs, system }:$' out.nix
+          grep -q '^  giglab = inputs.giglab-dev.containers.''${system}.giglab;$' out.nix
+          # Aliases that are not plain identifiers must be quoted.
+          grep -q '^  "giglab-0.0.1" = inputs.giglab-dev.containers.''${system}.giglab;$' out.nix
+          nixfmt --check out.nix
+
+          echo "generate_container_file verified" > $out
+        '';
+
+    discover-containers-fallback =
+      pkgs.runCommand "inputman-discover-containers-fallback-test"
+        {
+          buildInputs = [ pkg ];
+        }
+        ''
+          set -e
+          # An unreadable flake publishes no containers; that is not an error.
+          inputman __discover-containers "not-a-valid-flake-url" "x86_64-linux" > output 2> /dev/null
+          test ! -s output
+          echo "discover_containers fallback verified" > $out
         '';
 
     shellcheck =
