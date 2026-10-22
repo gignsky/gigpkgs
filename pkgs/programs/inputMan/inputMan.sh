@@ -43,6 +43,9 @@ Commands:
                         with the exact -f overrides that break the loop;
                         --fix applies them to flake.nix and relocks. install,
                         update, branch and pin apply them automatically
+  tidy                 Rewrite flake.nix inputs split across several lines
+                        (a.url = ..; a.inputs.x.follows = ..) into the single
+                        attribute-set form statix and nixfmt expect
   help                 Show this help
 
 Install options:
@@ -152,6 +155,18 @@ discover_modules() {
   fi
 }
 
+# One `alias = rhs;` attribute line, wrapped the way nixfmt wraps one that runs
+# past 100 columns, so generated aggregators pass the nixfmt pre-commit hook.
+nix_attr_line() {
+  local alias="$1" rhs="$2" line
+  line="  ${alias} = ${rhs};"
+  if ((${#line} > 100)); then
+    printf '  %s =\n    %s;\n' "$alias" "$rhs"
+  else
+    printf '%s\n' "$line"
+  fi
+}
+
 generate_input_file() {
   # Args: name, then pkg=alias pairs.
   local name="$1"
@@ -165,7 +180,7 @@ generate_input_file() {
   for pair in "$@"; do
     pkg="${pair%%=*}"
     alias="${pair#*=}"
-    printf "  %s = inputs.%s.packages.\${system}.%s;\n" "$alias" "$name" "$pkg"
+    nix_attr_line "$alias" "inputs.${name}.packages.\${system}.${pkg}"
   done
 
   printf '}\n'
@@ -187,7 +202,7 @@ generate_module_file() {
     else
       alias="${name}-${mod}"
     fi
-    printf "  %s = inputs.%s.%s.%s;\n" "$alias" "$name" "$attr" "$mod"
+    nix_attr_line "$alias" "inputs.${name}.${attr}.${mod}"
   done
 
   printf '}\n'
@@ -344,54 +359,6 @@ detect_follows_for_url() {
   rm -f "$tmp"
 }
 
-# Add follows lines to an input already present in flake.nix, right after its
-# `<name>.url` line. Keys already declared are left alone.
-#   usage: patch_flake_follows <name> key=target...
-patch_flake_follows() {
-  local name="$1"
-  shift
-  local follows_newline="" pair
-  for pair in "$@"; do
-    follows_newline+="$(normalize_follows_pair "$pair")"$'\n'
-  done
-
-  local perl_script
-  perl_script=$(
-    cat <<'PERL'
-    use strict;
-    use warnings;
-
-    my $n = $ENV{INPUT_NAME};
-    my @pairs = grep { length } split /\n/, ($ENV{INPUT_FOLLOWS} // "");
-    my $q = quotemeta($n);
-
-    $_ =~ /^([ \t]*)$q\.url\s*=\s*"[^"]*";[ \t]*\n/m
-      or die "inputMan: could not find '$n.url' in flake.nix (nested attrset form?)\n";
-    my ($indent, $end) = ($1, $+[0]);
-
-    my $insert = "";
-    for my $raw (@pairs) {
-      my ($k, $v) = split /=/, $raw, 2;
-      $v = "" unless defined $v;
-      my $chain = join('.inputs.', split /\./, $k);
-      next if $_ =~ /^[ \t]*$q\.inputs\.\Q$chain\E\.(?:follows|url)\s*=/m;
-      $insert .= qq{$indent$n.inputs.$chain.follows = "$v";\n};
-    }
-    substr($_, $end, 0, $insert);
-PERL
-  )
-
-  local err_file
-  err_file=$(mktemp)
-  if ! INPUT_NAME="$name" INPUT_FOLLOWS="$follows_newline" perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
-    local err
-    err=$(cat "$err_file")
-    rm -f "$err_file"
-    die "Failed to patch flake.nix: ${err:-unknown patch error}"
-  fi
-  rm -f "$err_file"
-}
-
 # Install-time helper: add the detected overrides for <url> to the explicit
 # ones in the named array, unless the user already chose that key.
 #   usage: add_detected_follows <url> <array-name>
@@ -441,6 +408,32 @@ ensure_no_circular_follows() {
   rm -rf "$backup"
   git add flake.nix flake.lock 2>/dev/null || true
   ok "Broke circular tracking for '${name}'"
+}
+
+cmd_tidy() {
+  local auto_commit="" no_commit=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    *) die "Usage: inputman tidy [options]" ;;
+    esac
+  done
+  [[ -f flake.nix ]] || die "No flake.nix found — run from the repo root"
+
+  patch_flake_tidy
+  if git diff --quiet -- flake.nix; then
+    ok "flake.nix inputs already tidy."
+    return 0
+  fi
+  git add flake.nix
+  finalize_commit "inputMan: tidy flake.nix inputs" "$auto_commit" "$no_commit"
 }
 
 cmd_doctor() {
@@ -500,236 +493,396 @@ cmd_doctor() {
   finalize_commit "inputMan: break circular gigpkgs tracking (${!findings[*]})" "$auto_commit" "$no_commit"
 }
 
-patch_flake_add() {
-  local name="$1" url="$2"
-  shift 2
+# ── flake.nix input editing ─────────────────────────────────────────────
+# Every edit to an input in flake.nix goes through one perl program that
+# reads that input's statements (dotted lines or a block, in any mix), applies
+# the change, and writes the input back in the form statix and nixfmt accept:
+#
+#   name.url = "github:owner/repo";            # url only: one dotted line
+#
+#   name = {                                    # anything more: one block,
+#     url = "github:owner/repo";                # never repeated `name.` keys
+#     inputs = {
+#       nixpkgs.follows = "nixpkgs-unstable";
+#       pre-commit-hooks.follows = "pre-commit-hooks";
+#     };
+#   };
+#
+# Operations (INPUT_OP): add (set url + follows), follows (add missing
+# follows, keep existing), seturl, remove, tidy (re-render every input that
+# is split across several statements).
+edit_flake_input() {
+  local perl_script
+  perl_script=$(
+    cat <<'PERL'
+    use strict;
+    use warnings;
 
-  local follows_newline=""
-  local pair
+    sub find_inputs_block {
+      my ($text) = @_;
+
+      $text =~ /inputs\s*=\s*\{/g or die "inputMan: could not locate inputs block in flake.nix\n";
+      my $open_pos = pos($text) - 1;
+
+      my $depth = 1;
+      my $i = $open_pos + 1;
+      my $len = length($text);
+      my ($in_dq, $in_sq, $in_comment) = (0, 0, 0);
+
+      while ($i < $len) {
+        my $ch = substr($text, $i, 1);
+        my $next2 = ($i + 1 < $len) ? substr($text, $i, 2) : "";
+
+        if ($in_comment) {
+          if ($ch eq "\n") { $in_comment = 0; }
+          $i++;
+          next;
+        }
+
+        if ($in_dq) {
+          if ($ch eq "\\") { $i += 2; next; }
+          if ($ch eq "\"") { $in_dq = 0; }
+          $i++;
+          next;
+        }
+
+        if ($in_sq) {
+          if ($next2 eq "''") { $in_sq = 0; $i += 2; next; }
+          $i++;
+          next;
+        }
+
+        if ($ch eq "#") { $in_comment = 1; $i++; next; }
+        if ($next2 eq "''") { $in_sq = 1; $i += 2; next; }
+        if ($ch eq "\"") { $in_dq = 1; $i++; next; }
+
+        if ($ch eq "{") { $depth++; $i++; next; }
+        if ($ch eq "}") {
+          $depth--;
+          return ($open_pos, $i) if $depth == 0;
+        }
+
+        $i++;
+      }
+
+      die "inputMan: could not find end of inputs block in flake.nix\n";
+    }
+
+    # Split $text[$from,$to) into `path = value;` statements. Returns hashes
+    # with path (segments), value (source text), start/end (byte span; start
+    # is the line start when only indentation precedes the statement, end
+    # includes the trailing newline).
+    sub scan_statements {
+      my ($text, $from, $to) = @_;
+      my @out;
+      my $i = $from;
+      while (1) {
+        pos($text) = $i;
+        $text =~ /\G\s*/gc;
+        $i = pos($text);
+        if ($i < $to && substr($text, $i, 1) eq "#") {
+          my $nl = index($text, "\n", $i);
+          $i = $nl < 0 ? $to : $nl + 1;
+          next;
+        }
+        last if $i >= $to;
+
+        my $start = $i;
+        my $ls = rindex($text, "\n", $i - 1) + 1;
+        $start = $ls if substr($text, $ls, $i - $ls) =~ /^[ \t]*$/;
+
+        pos($text) = $i;
+        $text =~ /\G([A-Za-z_][A-Za-z0-9_'-]*(?:\.(?:[A-Za-z_][A-Za-z0-9_'-]*|"[^"]*"))*)\s*=\s*/gc
+          or die "inputMan: cannot parse flake.nix inputs near: " . substr($text, $i, 40) . "\n";
+        my @path = split /\./, $1;
+        my $vstart = pos($text);
+
+        my ($depth, $in_dq, $in_sq, $in_comment) = (0, 0, 0, 0);
+        my $j = $vstart;
+        while ($j < $to) {
+          my $ch = substr($text, $j, 1);
+          my $next2 = substr($text, $j, 2);
+          if ($in_comment) { $in_comment = 0 if $ch eq "\n"; $j++; next; }
+          if ($in_dq) {
+            if ($ch eq "\\") { $j += 2; next; }
+            $in_dq = 0 if $ch eq "\"";
+            $j++;
+            next;
+          }
+          if ($in_sq) {
+            if ($next2 eq "''") { $in_sq = 0; $j += 2; next; }
+            $j++;
+            next;
+          }
+          if ($ch eq "#") { $in_comment = 1; $j++; next; }
+          if ($next2 eq "''") { $in_sq = 1; $j += 2; next; }
+          if ($ch eq "\"") { $in_dq = 1; $j++; next; }
+          if ($ch eq "{" || $ch eq "[") { $depth++; $j++; next; }
+          if ($ch eq "}" || $ch eq "]") { $depth--; $j++; next; }
+          last if $ch eq ";" && $depth == 0;
+          $j++;
+        }
+        die "inputMan: unterminated statement in flake.nix inputs\n" if $j >= $to;
+
+        my $value = substr($text, $vstart, $j - $vstart);
+        my $end = $j + 1;
+        pos($text) = $end;
+        $text =~ /\G[ \t]*\n?/gc;
+        $end = pos($text);
+        push @out, { path => \@path, value => $value, start => $start, end => $end };
+        $i = $end;
+      }
+      return @out;
+    }
+
+    # Flatten a statement into [chain, rhs] leaves, descending into `{ ... }`.
+    sub leaves_of {
+      my ($path, $value) = @_;
+      $value =~ s/^\s+|\s+$//g;
+      if ($value =~ /^\{(.*)\}$/s) {
+        my $inner = $1;
+        warn "inputMan: comments inside input '$path->[0]' are not preserved\n" if $inner =~ /^\s*#/m;
+        my @r;
+        for my $s (scan_statements($inner, 0, length $inner)) {
+          push @r, leaves_of([@$path, @{ $s->{path} }], $s->{value});
+        }
+        return @r;
+      }
+      return ([$path, $value]);
+    }
+
+    sub new_node { return { keys => [], kids => {}, val => undef }; }
+
+    sub set_leaf {
+      my ($root, $chain, $rhs, $keep) = @_;
+      my $n = $root;
+      for my $seg (@$chain) {
+        unless (exists $n->{kids}{$seg}) {
+          push @{ $n->{keys} }, $seg;
+          $n->{kids}{$seg} = new_node();
+        }
+        $n = $n->{kids}{$seg};
+      }
+      return if $keep && defined $n->{val};
+      $n->{val} = $rhs;
+    }
+
+    sub get_leaf {
+      my ($root, $chain) = @_;
+      my $n = $root;
+      for my $seg (@$chain) {
+        $n = $n->{kids}{$seg} or return undef;
+      }
+      return $n->{val};
+    }
+
+    sub render {
+      my ($node, $indent) = @_;
+      my @keys = @{ $node->{keys} };
+      @keys = ((grep { $_ eq "url" } @keys), (grep { $_ ne "url" } @keys));
+      my $out = "";
+      for my $k (@keys) {
+        my ($path, $n) = ($k, $node->{kids}{$k});
+        while (!defined $n->{val} && @{ $n->{keys} } == 1) {
+          my $c = $n->{keys}[0];
+          $path .= ".$c";
+          $n = $n->{kids}{$c};
+        }
+        if (defined $n->{val}) {
+          $out .= "$indent$path = $n->{val};\n";
+        } else {
+          $out .= "$indent$path = {\n" . render($n, "$indent  ") . "$indent};\n";
+        }
+      }
+      return $out;
+    }
+
+    # An input's statements -> a tree rooted below the input name.
+    sub input_tree {
+      my (@stmts) = @_;
+      my $root = new_node();
+      for my $s (@stmts) {
+        my @p = @{ $s->{path} };
+        shift @p;
+        for my $leaf (leaves_of(\@p, $s->{value})) {
+          set_leaf($root, $leaf->[0], $leaf->[1]);
+        }
+      }
+      return $root;
+    }
+
+    sub render_input {
+      my ($name, $tree, $indent) = @_;
+      my $top = new_node();
+      push @{ $top->{keys} }, $name;
+      $top->{kids}{$name} = $tree;
+      return render($top, $indent);
+    }
+
+    sub follows_chain {
+      my ($key) = @_;
+      return ((map { ("inputs", $_) } split /\./, $key), "follows");
+    }
+
+    my $op = $ENV{INPUT_OP};
+    my $n = $ENV{INPUT_NAME} // "";
+    my $u = $ENV{INPUT_URL} // "";
+    my @pairs = grep { length } split /\n/, ($ENV{INPUT_FOLLOWS} // "");
+
+    my ($open_pos, $close_pos) = find_inputs_block($_);
+    my $inner_start = $open_pos + 1;
+    my @stmts = scan_statements($_, $inner_start, $close_pos);
+
+    # Indentation of the inputs entries: that of the first statement, else
+    # two past the line holding `inputs = {`.
+    my $line_start = rindex($_, "\n", $open_pos) + 1;
+    my ($open_indent) = substr($_, $line_start) =~ /^([ \t]*)/;
+    my $indent = @stmts ? (substr($_, $stmts[0]{start}) =~ /^([ \t]*)/)[0] : $open_indent . "  ";
+
+    # Replace [start,end) spans (given back-to-front) and insert $new at $at.
+    my $apply = sub {
+      my ($spans, $at, $new) = @_;
+      for my $s (sort { $b->{start} <=> $a->{start} } @$spans) {
+        substr($_, $s->{start}, $s->{end} - $s->{start}, "");
+        $at -= ($s->{end} - $s->{start}) if $s->{start} < $at;
+      }
+      substr($_, $at, 0, $new);
+    };
+
+    if ($op eq "tidy") {
+      # Rescan after every rewrite: spans shift as inputs are re-rendered.
+      while (1) {
+        my ($o, $c) = find_inputs_block($_);
+        my @all = scan_statements($_, $o + 1, $c);
+        my (%by, @order);
+        for my $s (@all) {
+          my $k = $s->{path}[0];
+          push @order, $k unless $by{$k};
+          push @{ $by{$k} }, $s;
+        }
+        my ($target) = grep {
+          my @g = @{ $by{$_} };
+          @g > 1;
+        } @order;
+        last unless defined $target;
+        my @g = @{ $by{$target} };
+        my ($ind) = substr($_, $g[0]{start}) =~ /^([ \t]*)/;
+        $apply->(\@g, $g[0]{start}, render_input($target, input_tree(@g), $ind));
+      }
+    } else {
+      my @mine = grep { $_->{path}[0] eq $n } @stmts;
+
+      if ($op eq "remove") {
+        die "inputMan: input '$n' not found in flake.nix inputs block\n" unless @mine;
+        # A comment block directly above the input belongs to it.
+        my $first = $mine[0];
+        while ($first->{start} > 0) {
+          my $prev = rindex($_, "\n", $first->{start} - 2) + 1;
+          last unless substr($_, $prev, $first->{start} - $prev) =~ /^[ \t]*#.*\n$/;
+          $first->{start} = $prev;
+        }
+        $apply->(\@mine, $mine[0]{start}, "");
+      } else {
+        my $tree = input_tree(@mine);
+        if ($op eq "add") {
+          set_leaf($tree, ["url"], "\"$u\"");
+          set_leaf($tree, [follows_chain((split /=/, $_, 2)[0])], "\"" . ((split /=/, $_, 2)[1] // "") . "\"") for @pairs;
+        } elsif ($op eq "follows") {
+          die "inputMan: could not find input '$n' in flake.nix\n" unless @mine;
+          set_leaf($tree, [follows_chain((split /=/, $_, 2)[0])], "\"" . ((split /=/, $_, 2)[1] // "") . "\"", 1) for @pairs;
+        } elsif ($op eq "seturl") {
+          die "inputMan: could not find '$n.url' in flake.nix\n" unless defined get_leaf($tree, ["url"]);
+          set_leaf($tree, ["url"], "\"$u\"");
+        } else {
+          die "inputMan: unknown edit '$op'\n";
+        }
+        my $new = render_input($n, $tree, @mine ? (substr($_, $mine[0]{start}) =~ /^([ \t]*)/)[0] : $indent);
+        if (@mine) {
+          $apply->(\@mine, $mine[0]{start}, $new);
+        } else {
+          # New input: just before the closing brace's own line.
+          my $cls = rindex($_, "\n", $close_pos) + 1;
+          my $at = substr($_, $cls, $close_pos - $cls) =~ /^[ \t]*$/ ? $cls : $close_pos;
+          $new = "\n$new" if $at == $close_pos;
+          $new = "\n$new" if @stmts && substr($_, 0, $at) !~ /\n\n$/ && $at != $close_pos;
+          substr($_, $at, 0, $new);
+        }
+      }
+
+      # Edits can leave two blank lines in a row; nixfmt allows one.
+      my ($o2, $c2) = find_inputs_block($_);
+      my $region = substr($_, $o2 + 1, $c2 - $o2 - 1);
+      $region =~ s/\n{3,}/\n\n/g;
+      substr($_, $o2 + 1, $c2 - $o2 - 1, $region);
+    }
+PERL
+  )
+
+  local err_file
+  err_file=$(mktemp)
+  if ! perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
+    local err
+    err=$(cat "$err_file")
+    rm -f "$err_file"
+    die "Failed to patch flake.nix: ${err:-unknown patch error}"
+  fi
+  # Non-fatal perl warnings (e.g. dropped comments) still deserve a line.
+  [[ -s "$err_file" ]] && warn "$(cat "$err_file")"
+  rm -f "$err_file"
+}
+
+# Run `edit_flake_input` with its inputs in the environment.
+#   usage: flake_input_op <op> <name> <url> [key=target...]
+flake_input_op() {
+  local op="$1" name="$2" url="$3"
+  shift 3
+  local follows_newline="" pair
   for pair in "$@"; do
     follows_newline+="$(normalize_follows_pair "$pair")"$'\n'
   done
-
-  local perl_script
-  perl_script=$(
-    cat <<'PERL'
-    use strict;
-    use warnings;
-
-    sub find_inputs_block {
-      my ($text) = @_;
-
-      $text =~ /inputs\s*=\s*\{/g or die "inputMan: could not locate inputs block in flake.nix\n";
-      my $open_pos = pos($text) - 1;
-
-      my $depth = 1;
-      my $i = $open_pos + 1;
-      my $len = length($text);
-      my ($in_dq, $in_sq, $in_comment) = (0, 0, 0);
-
-      while ($i < $len) {
-        my $ch = substr($text, $i, 1);
-        my $next2 = ($i + 1 < $len) ? substr($text, $i, 2) : "";
-
-        if ($in_comment) {
-          if ($ch eq "\n") { $in_comment = 0; }
-          $i++;
-          next;
-        }
-
-        if ($in_dq) {
-          if ($ch eq "\\") { $i += 2; next; }
-          if ($ch eq "\"") { $in_dq = 0; }
-          $i++;
-          next;
-        }
-
-        if ($in_sq) {
-          if ($next2 eq "''") { $in_sq = 0; $i += 2; next; }
-          $i++;
-          next;
-        }
-
-        if ($ch eq "#") { $in_comment = 1; $i++; next; }
-        if ($next2 eq "''") { $in_sq = 1; $i += 2; next; }
-        if ($ch eq "\"") { $in_dq = 1; $i++; next; }
-
-        if ($ch eq "{") { $depth++; $i++; next; }
-        if ($ch eq "}") {
-          $depth--;
-          return ($open_pos, $i) if $depth == 0;
-        }
-
-        $i++;
-      }
-
-      die "inputMan: could not find end of inputs block in flake.nix\n";
-    }
-
-    my $n = $ENV{INPUT_NAME};
-    my $u = $ENV{INPUT_URL};
-    my $follows_raw = $ENV{INPUT_FOLLOWS} // "";
-
-    my ($open_pos, $close_pos) = find_inputs_block($_);
-
-    my $line_start = rindex($_, "\n", $open_pos);
-    $line_start = -1 if $line_start < 0;
-    my $line_end = index($_, "\n", $open_pos);
-    $line_end = length($_) if $line_end < 0;
-    my $line = substr($_, $line_start + 1, $line_end - ($line_start + 1));
-    my ($indent) = ($line =~ /^(\s*)/);
-    my $entry_indent = ($indent // "") . "  ";
-
-    my @insert_lines = (qq{$entry_indent$n.url = "$u";});
-    for my $raw (split /\n/, $follows_raw) {
-      next if $raw eq q{};
-      my ($k, $v) = split /=/, $raw, 2;
-      $v = "" unless defined $v;
-      my @segs = split /\./, $k;
-      my $chain = join('.inputs.', @segs);
-      push @insert_lines, qq{$entry_indent$n.inputs.$chain.follows = "$v";};
-    }
-
-    my $insert = "\n" . join("\n", @insert_lines) . "\n";
-    substr($_, $close_pos, 0, $insert);
-PERL
-  )
-
-  local err_file
-  err_file=$(mktemp)
-  if ! INPUT_NAME="$name" INPUT_URL="$url" INPUT_FOLLOWS="$follows_newline" perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
-    local err
-    err=$(cat "$err_file")
-    rm -f "$err_file"
-    die "Failed to patch flake.nix: ${err:-unknown patch error}"
-  fi
-
-  rm -f "$err_file"
+  INPUT_OP="$op" INPUT_NAME="$name" INPUT_URL="$url" INPUT_FOLLOWS="$follows_newline" edit_flake_input
 }
 
-patch_flake_remove() {
-  local name="$1"
-  local perl_script
-  perl_script=$(
-    cat <<'PERL'
-    use strict;
-    use warnings;
-
-    sub find_inputs_block {
-      my ($text) = @_;
-
-      $text =~ /inputs\s*=\s*\{/g or die "inputMan: could not locate inputs block in flake.nix\n";
-      my $open_pos = pos($text) - 1;
-
-      my $depth = 1;
-      my $i = $open_pos + 1;
-      my $len = length($text);
-      my ($in_dq, $in_sq, $in_comment) = (0, 0, 0);
-
-      while ($i < $len) {
-        my $ch = substr($text, $i, 1);
-        my $next2 = ($i + 1 < $len) ? substr($text, $i, 2) : "";
-
-        if ($in_comment) {
-          if ($ch eq "\n") { $in_comment = 0; }
-          $i++;
-          next;
-        }
-
-        if ($in_dq) {
-          if ($ch eq "\\") { $i += 2; next; }
-          if ($ch eq "\"") { $in_dq = 0; }
-          $i++;
-          next;
-        }
-
-        if ($in_sq) {
-          if ($next2 eq "''") { $in_sq = 0; $i += 2; next; }
-          $i++;
-          next;
-        }
-
-        if ($ch eq "#") { $in_comment = 1; $i++; next; }
-        if ($next2 eq "''") { $in_sq = 1; $i += 2; next; }
-        if ($ch eq "\"") { $in_dq = 1; $i++; next; }
-
-        if ($ch eq "{") { $depth++; $i++; next; }
-        if ($ch eq "}") {
-          $depth--;
-          return ($open_pos, $i) if $depth == 0;
-        }
-
-        $i++;
-      }
-
-      die "inputMan: could not find end of inputs block in flake.nix\n";
-    }
-
-    my $n = $ENV{INPUT_NAME};
-    my ($open_pos, $close_pos) = find_inputs_block($_);
-
-    my $inner_start = $open_pos + 1;
-    my $inner_len = $close_pos - $inner_start;
-    my $inner = substr($_, $inner_start, $inner_len);
-
-    my $removed_url = ($inner =~ s/^\h*\Q$n\E\.url\h*=\h*".*?";\h*\n//mg);
-    $inner =~ s/^\h*\Q$n\E(?:\.inputs\.[a-zA-Z][a-zA-Z0-9_-]*)+\.follows\h*=\h*".*?";\h*\n//mg;
-
-    die "inputMan: input '$n' not found in flake.nix inputs block\n" unless $removed_url;
-
-    substr($_, $inner_start, $inner_len, $inner);
-PERL
-  )
-
-  local err_file
-  err_file=$(mktemp)
-
-  if ! INPUT_NAME="$name" perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
-    local err
-    err=$(cat "$err_file")
-    rm -f "$err_file"
-    die "Failed to patch flake.nix: ${err:-unknown patch error}"
-  fi
-
-  rm -f "$err_file"
-}
-
-# Rewrite an existing `<name>.url = "...";` line in flake.nix to a new URL.
-# Used by `inputman branch` to change which ref an input tracks. Only supports
-# the single-line dotted form inputMan itself generates (patch_flake_add);
-# dies if the input isn't declared that way (e.g. hand-edited block form).
-patch_flake_set_url() {
+# Add an input (url + optional follows) to flake.nix.
+patch_flake_add() {
   local name="$1" url="$2"
+  shift 2
+  flake_input_op add "$name" "$url" "$@"
+}
 
-  local perl_script
-  perl_script=$(
-    cat <<'PERL'
-    use strict;
-    use warnings;
+# Add follows lines to an input already in flake.nix; keys already declared
+# are left alone.
+#   usage: patch_flake_follows <name> key=target...
+patch_flake_follows() {
+  local name="$1"
+  shift
+  flake_input_op follows "$name" "" "$@"
+}
 
-    my $n = $ENV{INPUT_NAME};
-    my $u = $ENV{INPUT_URL};
+# Remove an input and everything declared under its name.
+patch_flake_remove() {
+  flake_input_op remove "$1" ""
+}
 
-    my $count = () = /^[ \t]*\Q$n\E\.url[ \t]*=[ \t]*".*?";[ \t]*$/mg;
-    die "inputMan: could not find '$n.url = \"...\";' line in flake.nix\n" unless $count;
+# Point an existing input at a new URL (used by `inputman branch`), keeping
+# its follows.
+patch_flake_set_url() {
+  flake_input_op seturl "$1" "$2"
+}
 
-    s/^([ \t]*)\Q$n\E\.url[ \t]*=[ \t]*".*?";[ \t]*$/$1$n.url = "$u";/m;
-PERL
-  )
-
-  local err_file
-  err_file=$(mktemp)
-  if ! INPUT_NAME="$name" INPUT_URL="$url" perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
-    local err
-    err=$(cat "$err_file")
-    rm -f "$err_file"
-    die "Failed to patch flake.nix: ${err:-unknown patch error}"
-  fi
-
-  rm -f "$err_file"
+# Rewrite inputs split across several statements (`a.url = ...; a.inputs.x...`)
+# into the single-block form.
+patch_flake_tidy() {
+  flake_input_op tidy "" ""
 }
 
 # Read the set of pkg=alias pairs currently exposed by pkgs/inputs/<name>.nix.
+# Print an aggregator with nixfmt-wrapped `alias =\n    rhs;` entries joined
+# back onto one line, so the line-oriented parsers below see every entry whole.
+unwrap_nix_file() {
+  perl -0pe 's/=\n[ \t]+/= /g' "$1"
+}
+
 current_package_pairs() {
   local name="$1"
   local file="pkgs/inputs/${name}.nix"
@@ -739,7 +892,7 @@ current_package_pairs() {
     if [[ "$line" =~ $pattern ]]; then
       printf '%s=%s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}"
     fi
-  done <"$file"
+  done < <(unwrap_nix_file "$file")
 }
 
 # Detect a hand-customized managed input file: one that exists but exposes no
@@ -752,7 +905,7 @@ input_file_is_custom() {
   local file="pkgs/inputs/${name}.nix"
   [[ -f "$file" ]] || return 1
   local pattern='^\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*inputs\.'"$name"'\.packages\.\$\{system\}\.'
-  grep -qE "$pattern" "$file" && return 1
+  unwrap_nix_file "$file" | grep -qE "$pattern" && return 1
   return 0
 }
 
@@ -989,7 +1142,7 @@ current_module_pairs() {
     if [[ "$line" =~ $pattern ]]; then
       printf '%s=%s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}"
     fi
-  done <"$file"
+  done < <(unwrap_nix_file "$file")
 }
 
 # Render a rescan-section header for `inputman update` output. Streams the
@@ -1349,7 +1502,7 @@ maybe_generate_module_aggregator() {
     for sel in "${selection[@]}"; do
       mod2="${sel%%=*}"
       alias2="${sel#*=}"
-      printf "  %s = inputs.%s.%s.%s;\n" "$alias2" "$name" "$attr" "$mod2"
+      nix_attr_line "$alias2" "inputs.${name}.${attr}.${mod2}"
     done
     printf '}\n'
   } >"$file"
@@ -1491,7 +1644,7 @@ cmd_install() {
   info "Generating ${input_file} ..."
   local content
   content=$(generate_input_file "$name" "${selection[@]}")
-  printf '%s' "$content" >>"$input_file"
+  printf '%s\n' "$content" >>"$input_file"
   ok "Wrote ${input_file}"
 
   if [[ -z "$no_auto_follows" ]]; then
@@ -1632,7 +1785,7 @@ append_package_entries() {
   for pair in "$@"; do
     pkg="${pair%%=*}"
     alias="${pair#*=}"
-    lines+=("  ${alias} = inputs.${name}.packages.\${system}.${pkg};")
+    lines+=("$(nix_attr_line "$alias" "inputs.${name}.packages.\${system}.${pkg}")")
   done
   append_lines_before_close "$file" "${lines[@]}"
 }
@@ -1670,7 +1823,7 @@ append_module_entries() {
   for pair in "$@"; do
     mod="${pair%%=*}"
     alias="${pair#*=}"
-    lines+=("  ${alias} = inputs.${name}.${attr}.${mod};")
+    lines+=("$(nix_attr_line "$alias" "inputs.${name}.${attr}.${mod}")")
   done
   append_lines_before_close "$file" "${lines[@]}"
 
@@ -2029,7 +2182,8 @@ version_ident() {
 # materialized (i.e. exposed in pkgs/inputs/<name>.nix).
 is_version_materialized() {
   local name="$1" version="$2"
-  grep -qF "\"${name}-${version}\" = inputs." "pkgs/inputs/${name}.nix" 2>/dev/null
+  [[ -f "pkgs/inputs/${name}.nix" ]] || return 1
+  unwrap_nix_file "pkgs/inputs/${name}.nix" | grep -qF "\"${name}-${version}\" = inputs."
 }
 
 materialize_version_package() {
@@ -2064,7 +2218,7 @@ materialize_version_package() {
   fi
 
   if [[ "$have_alias" -eq 0 && -f "$file" ]]; then
-    append_lines_before_close "$file" "  \"${alias}\" = inputs.${ident}.packages.\${system}.default;"
+    append_lines_before_close "$file" "$(nix_attr_line "\"${alias}\"" "inputs.${ident}.packages.\${system}.default")"
   fi
 
   git add flake.nix flake.lock "$file" 2>/dev/null || true
@@ -2414,6 +2568,18 @@ branch)
 doctor)
   shift
   cmd_doctor "$@"
+  ;;
+tidy)
+  shift
+  cmd_tidy "$@"
+  ;;
+__generate-input-file)
+  shift
+  [[ $# -ge 2 ]] || die "Usage: inputman __generate-input-file <name> <pkg=alias>..."
+  generate_input_file "$@"
+  ;;
+__patch-flake-tidy)
+  patch_flake_tidy
   ;;
 __detect-circular-follows)
   shift
