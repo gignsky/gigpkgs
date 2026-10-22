@@ -644,7 +644,7 @@
         ],
         "nixos-unstable": "nixos-unstable",
         "nixpkgs": [
-          "nixpkgs-master"
+          "nixos-unstable"
         ],
         "nixpkgs-master": [
           "nixpkgs-unstable"
