@@ -20,7 +20,7 @@ usage() {
 Usage: inputman <command> [options]
 
 Commands:
-  install <url>        Add a flake input and expose its packages + modules
+  install <url>        Add a flake input and expose its packages, modules + containers
   update <name>        Refresh a locked input; prompt for new packages/modules
   remove <name>        Remove a flake input and its generated files
   pin <name> <ref>     Materialize a permanent "<name>-<ref>" package (e.g.
@@ -66,11 +66,13 @@ Install options:
   --no-auto-follows      Do not auto-add follows for inputs that track gigpkgs
   --no-branch            Skip creating add-input/<name> branch from origin/master
   --no-modules           Skip module auto-discovery
+  --no-containers        Skip container auto-discovery
   --yes, -y              Accept prompts and commit without asking
   --no-commit, -n        Stage changes but do not commit
 
 Update options:
   --no-modules           Skip module re-scan
+  --no-containers        Skip container re-scan
   --yes, -y              Auto-include new packages/modules with default aliases; commit
   --no-commit, -n        Stage changes but do not commit
 
@@ -159,6 +161,10 @@ discover_modules() {
 # past 100 columns, so generated aggregators pass the nixfmt pre-commit hook.
 nix_attr_line() {
   local alias="$1" rhs="$2" line
+  # Quote anything that is not a plain Nix identifier (e.g. `roll-flow-0.2.5`).
+  if [[ "$alias" != \"* && ! "$alias" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]; then
+    alias="\"${alias}\""
+  fi
   line="  ${alias} = ${rhs};"
   if ((${#line} > 100)); then
     printf '  %s =\n    %s;\n' "$alias" "$rhs"
@@ -1405,6 +1411,7 @@ INPUTMAN_CLEANUP_FLAKE=0
 INPUTMAN_CLEANUP_NEWS_FILE=""
 INPUTMAN_CLEANUP_HOME_MOD=""
 INPUTMAN_CLEANUP_NIXOS_MOD=""
+INPUTMAN_CLEANUP_CONTAINERS=""
 
 inputman_install_cleanup() {
   local status="$1"
@@ -1429,6 +1436,11 @@ inputman_install_cleanup() {
     rolled_back=1
   fi
 
+  if [[ -n "${INPUTMAN_CLEANUP_CONTAINERS:-}" && -f "${INPUTMAN_CLEANUP_CONTAINERS}" ]]; then
+    rm -f "${INPUTMAN_CLEANUP_CONTAINERS}"
+    rolled_back=1
+  fi
+
   if [[ -n "${INPUTMAN_CLEANUP_NEWS_FILE:-}" && -f "${INPUTMAN_CLEANUP_NEWS_FILE}" ]]; then
     rm -f "${INPUTMAN_CLEANUP_NEWS_FILE}"
     rolled_back=1
@@ -1446,6 +1458,98 @@ inputman_install_cleanup() {
 
 # Write a module aggregator file if the input exposes modules of the given kind.
 # Returns the generated file path on stdout, or empty if none written.
+# ── Containers ──────────────────────────────────────────────────────────
+# An input may publish `containers.<system>.<name>` (a container spec: fill-in
+# items, `imageFile`, and an oci-containers-ready `service` attrset). Each is
+# exposed through containers/inputs/<input>.nix and run on a host with
+# `gigpkgs.containers.fromInputs.<name>`.
+
+# Names of the containers an input publishes for <system>, one per line.
+discover_containers() {
+  local url="$1" system="$2" names_json
+  if names_json=$(nix eval --json "${url}#containers.${system}" --apply 'set: builtins.attrNames set' 2>/dev/null); then
+    printf '%s' "$names_json" | jq -r '.[]' 2>/dev/null || true
+  fi
+}
+
+# `container=version` lines for an input's containers, labelled
+# `container/<name>` so they diff alongside package versions in news entries.
+container_versions_for_url() {
+  local url="$1" system="$2" json
+  json=$(nix eval --json "${url}#containers.${system}" \
+    --apply 'cs: builtins.mapAttrs (_: c: c.version or "") cs' 2>/dev/null) || return 0
+  printf '%s' "$json" | jq -r 'to_entries[] | select(.value != "") | "container/\(.key)=\(.value)"' 2>/dev/null || true
+}
+
+# container=alias pairs currently exposed by containers/inputs/<name>.nix.
+current_container_pairs() {
+  local name="$1"
+  local file="containers/inputs/${name}.nix"
+  [[ -f "$file" ]] || return 0
+  local pattern='^\s*"?([A-Za-z][A-Za-z0-9._-]*)"?\s*=\s*inputs\.'"$name"'\.containers\.\$\{system\}\.([A-Za-z0-9_-]+);'
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" =~ $pattern ]]; then
+      printf '%s=%s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}"
+    fi
+  done < <(unwrap_nix_file "$file")
+}
+
+generate_container_file() {
+  # Args: input name, then container=alias pairs.
+  local name="$1"
+  shift
+  printf '# gigpkgs inputMan: managed containers aggregator\n'
+  printf '{ inputs, system }:\n'
+  printf '{\n'
+  local pair
+  for pair in "$@"; do
+    nix_attr_line "${pair#*=}" "inputs.${name}.containers.\${system}.${pair%%=*}"
+  done
+  printf '}\n'
+}
+
+# Write containers/inputs/<name>.nix for every container <url> publishes
+# (each under its own name). Prints the file, or nothing if there are none.
+maybe_generate_container_aggregator() {
+  local name="$1" url="$2" system="$3"
+  local -a found=() pairs=()
+  local c
+  while IFS= read -r c; do
+    [[ -n "$c" ]] && found+=("$c")
+  done < <(discover_containers "$url" "$system")
+  [[ ${#found[@]} -eq 0 ]] && return 0
+
+  info "Discovered ${#found[@]} container(s) in '${name}': ${found[*]}" >&2
+  for c in "${found[@]}"; do
+    pairs+=("${c}=${c}")
+  done
+
+  mkdir -p containers/inputs
+  local file="containers/inputs/${name}.nix"
+  generate_container_file "$name" "${pairs[@]}" >"$file"
+  ok "Wrote ${file}" >&2
+  printf '%s' "$file"
+}
+
+# Append container=alias entries to containers/inputs/<name>.nix.
+append_container_entries() {
+  local name="$1" system="$2"
+  shift 2
+  local file="containers/inputs/${name}.nix"
+  if [[ ! -f "$file" ]]; then
+    mkdir -p containers/inputs
+    generate_container_file "$name" >"$file"
+  fi
+  local -a lines=()
+  local pair
+  for pair in "$@"; do
+    lines+=("$(nix_attr_line "${pair#*=}" "inputs.${name}.containers.\${system}.${pair%%=*}")")
+  done
+  append_lines_before_close "$file" "${lines[@]}"
+  printf '%s' "$file"
+}
+
 maybe_generate_module_aggregator() {
   local name="$1" url="$2" kind="$3" auto_yes="$4"
   local attr subdir
@@ -1514,6 +1618,7 @@ maybe_generate_module_aggregator() {
 cmd_install() {
   local url="" name="" packages_arg="" packages_flag="" auto_commit="" no_commit=""
   local no_info="" no_branch="" no_modules=""
+  local no_containers=""
   local no_auto_follows=""
   local -a follows_pairs=()
 
@@ -1556,6 +1661,10 @@ cmd_install() {
       ;;
     --no-modules)
       no_modules=1
+      shift
+      ;;
+    --no-containers)
+      no_containers=1
       shift
       ;;
     --yes | -y)
@@ -1608,6 +1717,7 @@ cmd_install() {
   INPUTMAN_CLEANUP_FLAKE=0
   INPUTMAN_CLEANUP_HOME_MOD=""
   INPUTMAN_CLEANUP_NIXOS_MOD=""
+  INPUTMAN_CLEANUP_CONTAINERS=""
   trap 'inputman_install_cleanup "$?"' RETURN
 
   local system
@@ -1673,6 +1783,13 @@ cmd_install() {
     INPUTMAN_CLEANUP_NIXOS_MOD="$nixos_mod_file"
   fi
 
+  local containers_file=""
+  if [[ -z "$no_containers" ]]; then
+    info "Scanning ${name} for containers ..."
+    containers_file=$(maybe_generate_container_aggregator "$name" "$url" "$system" || true)
+    INPUTMAN_CLEANUP_CONTAINERS="$containers_file"
+  fi
+
   local pkg_summary
   pkg_summary=$(printf '%s ' "${selection[@]}")
   local news_details="Source: ${url}"$'\n'"Packages: ${pkg_summary%% }"
@@ -1708,6 +1825,13 @@ cmd_install() {
 
   [[ -n "$home_mod_file" ]] && news_details+=$'\n'"Home modules aggregator: ${home_mod_file}"
   [[ -n "$nixos_mod_file" ]] && news_details+=$'\n'"NixOS modules aggregator: ${nixos_mod_file}"
+  if [[ -n "$containers_file" ]]; then
+    news_details+=$'\n'"Containers aggregator: ${containers_file}"
+    local container_line
+    while IFS= read -r container_line; do
+      [[ -n "$container_line" ]] && news_details+=$'\n'"  ${container_line%%=*} ${container_line#*=}"
+    done < <(container_versions_for_url "$url" "$system")
+  fi
   local news_file
   news_file=$(write_news_entry install "$name" "$news_details" "$headline_suffix") || news_file=""
   INPUTMAN_CLEANUP_NEWS_FILE="$news_file"
@@ -1715,6 +1839,7 @@ cmd_install() {
   git add "$input_file" flake.nix flake.lock
   [[ -n "$home_mod_file" ]] && git add "$home_mod_file"
   [[ -n "$nixos_mod_file" ]] && git add "$nixos_mod_file"
+  [[ -n "$containers_file" ]] && git add "$containers_file"
   [[ -n "$news_file" ]] && git add "$news_file"
   [[ -f "$(versions_ledger_file)" ]] && git add "$(versions_ledger_file)"
 
@@ -1725,6 +1850,7 @@ cmd_install() {
   INPUTMAN_CLEANUP_FLAKE=0
   INPUTMAN_CLEANUP_HOME_MOD=""
   INPUTMAN_CLEANUP_NIXOS_MOD=""
+  INPUTMAN_CLEANUP_CONTAINERS=""
   INPUTMAN_CLEANUP_NEWS_FILE=""
   trap - RETURN
 }
@@ -1832,6 +1958,7 @@ append_module_entries() {
 
 cmd_update() {
   local name="" auto_commit="" no_commit="" no_modules=""
+  local no_containers=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1845,6 +1972,10 @@ cmd_update() {
       ;;
     --no-modules)
       no_modules=1
+      shift
+      ;;
+    --no-containers)
+      no_containers=1
       shift
       ;;
     -*) die "Unknown option: $1" ;;
@@ -1871,6 +2002,9 @@ cmd_update() {
   before_modified=$(locked_input_field "$name" lastModified)
   info "Recording current versions of '${name}' ..."
   before_versions=$(input_package_versions "$name" "$system")
+  local before_cv="" before_url=""
+  before_url=$(locked_input_url "$name" 2>/dev/null || true)
+  [[ -n "$before_url" ]] && before_cv=$(container_versions_for_url "$before_url" "$system")
 
   info "Updating input '${name}' ..."
   nix flake update "$name"
@@ -1902,6 +2036,7 @@ cmd_update() {
   fi
 
   local -a added_pkgs=() added_home=() added_nixos=()
+  local -a added_containers=()
 
   if [[ -n "$url" ]]; then
     local pair pkg mod
@@ -2001,6 +2136,26 @@ cmd_update() {
         done
       fi
     fi
+
+    if [[ -z "$no_containers" ]]; then
+      # ── Containers rescan ──────────────────────────────────────────
+      local -A current_container_map=()
+      local -a existing_container_display=() new_container_list=()
+      while IFS= read -r pair; do
+        [[ -z "$pair" ]] && continue
+        current_container_map["${pair%%=*}"]=1
+        existing_container_display+=("${pair#*=}  <-  containers.${pair%%=*}")
+      done < <(current_container_pairs "$name")
+      while IFS= read -r mod; do
+        [[ -n "$mod" && -z "${current_container_map[$mod]:-}" ]] && new_container_list+=("$mod")
+      done < <(discover_containers "$url" "$system")
+      if [[ ${#new_container_list[@]} -gt 0 ]]; then
+        print_rescan_section "containers" "$name" "${existing_container_display[@]}"
+        for mod in "${new_container_list[@]}"; do
+          added_containers+=("${mod}=${mod}")
+        done
+      fi
+    fi
   fi
 
   local home_mod_file="" nixos_mod_file=""
@@ -2015,6 +2170,11 @@ cmd_update() {
   if [[ ${#added_nixos[@]} -gt 0 ]]; then
     nixos_mod_file=$(append_module_entries "$name" nixos "${added_nixos[@]}")
     ok "Added ${#added_nixos[@]} new nixos module entry(ies) to ${nixos_mod_file}"
+  fi
+  local containers_file=""
+  if [[ ${#added_containers[@]} -gt 0 ]]; then
+    containers_file=$(append_container_entries "$name" "$system" "${added_containers[@]}")
+    ok "Added ${#added_containers[@]} new container entry(ies) to ${containers_file}"
   fi
 
   # Re-evaluate versions now that any newly exposed packages are wired up, so
@@ -2048,6 +2208,17 @@ cmd_update() {
     ok "Version: ${change}"
   done < <(version_changes "$before_versions" "$after_versions")
 
+  # Container image versions, from the input's own flake before and after.
+  local after_cv=""
+  [[ -n "$url" ]] && after_cv=$(container_versions_for_url "$url" "$system")
+  while IFS='|' read -r alias old_v new_v; do
+    [[ -z "$alias" ]] && continue
+    change=$(format_version_change "$alias" "$old_v" "$new_v")
+    version_lines+=("$change")
+    [[ -z "$first_change" ]] && first_change="${old_v:+${old_v} -> }${new_v}"
+    ok "Version: ${change}"
+  done < <(version_changes "$before_cv" "$after_cv")
+
   local news_details="" headline_suffix=""
   if [[ -n "$before_rev" && "$before_rev" == "$after_rev" ]]; then
     news_details+="No upstream changes — still locked at $(short_rev "$after_rev")."$'\n'
@@ -2069,6 +2240,7 @@ cmd_update() {
   [[ ${#added_pkgs[@]} -gt 0 ]] && news_details+="New packages: ${added_pkgs[*]}"$'\n'
   [[ ${#added_home[@]} -gt 0 ]] && news_details+="New home modules: ${added_home[*]}"$'\n'
   [[ ${#added_nixos[@]} -gt 0 ]] && news_details+="New nixos modules: ${added_nixos[*]}"$'\n'
+  [[ ${#added_containers[@]} -gt 0 ]] && news_details+="New containers: ${added_containers[*]}"$'\n'
   [[ ${#archived_aliases[@]} -gt 0 ]] && news_details+="Archived as: ${archived_aliases[*]}"$'\n'
   local news_file
   news_file=$(write_news_entry update "$name" "$news_details" "$headline_suffix") || news_file=""
@@ -2076,6 +2248,7 @@ cmd_update() {
   git add flake.lock "pkgs/inputs/${name}.nix" 2>/dev/null || true
   [[ -n "$home_mod_file" ]] && git add "$home_mod_file"
   [[ -n "$nixos_mod_file" ]] && git add "$nixos_mod_file"
+  [[ -n "$containers_file" ]] && git add "$containers_file"
   [[ -n "$news_file" ]] && git add "$news_file"
   [[ -f "$(versions_ledger_file)" ]] && git add "$(versions_ledger_file)"
   finalize_commit "inputMan: update input ${name}" "$auto_commit" "$no_commit"
@@ -2113,6 +2286,7 @@ cmd_remove() {
 
   local home_mod_file="modules/home/inputs/${name}.nix"
   local nixos_mod_file="modules/nixos/inputs/${name}.nix"
+  local containers_file="containers/inputs/${name}.nix"
 
   # Capture the lock state before it's torn out, so the news entry records what
   # was actually dropped.
@@ -2124,6 +2298,7 @@ cmd_remove() {
   rm -f "$input_file"
   [[ -f "$home_mod_file" ]] && rm -f "$home_mod_file"
   [[ -f "$nixos_mod_file" ]] && rm -f "$nixos_mod_file"
+  [[ -f "$containers_file" ]] && rm -f "$containers_file"
   patch_flake_remove "$name"
   nix flake lock
   ok "Removed input '${name}' and updated flake.lock"
@@ -2137,6 +2312,7 @@ cmd_remove() {
   git add "$input_file" flake.nix flake.lock
   [[ -f "$home_mod_file" ]] || git add "$home_mod_file" 2>/dev/null || true
   [[ -f "$nixos_mod_file" ]] || git add "$nixos_mod_file" 2>/dev/null || true
+  git rm --ignore-unmatch "$containers_file" >/dev/null 2>&1 || true
   git rm --ignore-unmatch "$home_mod_file" "$nixos_mod_file" >/dev/null 2>&1 || true
   [[ -n "$news_file" ]] && git add "$news_file"
   finalize_commit "inputMan: remove input ${name}" "$auto_commit" "$no_commit"
@@ -2219,6 +2395,22 @@ materialize_version_package() {
 
   if [[ "$have_alias" -eq 0 && -f "$file" ]]; then
     append_lines_before_close "$file" "$(nix_attr_line "\"${alias}\"" "inputs.${ident}.packages.\${system}.default")"
+  fi
+
+  # The pinned input's containers get version-named aliases too, so a host can
+  # switch `fromInputs.<name>` to a frozen image (giglab-0.0.1) to roll back.
+  local cfile="containers/inputs/${name}.nix"
+  if [[ -f "$cfile" ]]; then
+    local csystem pin_owner pin_repo c calias
+    csystem=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
+    read -r pin_owner pin_repo < <(github_owner_repo "$name" "pin")
+    while IFS= read -r c; do
+      [[ -n "$c" ]] || continue
+      calias="${c}-${version}"
+      unwrap_nix_file "$cfile" | grep -qF "\"${calias}\" = inputs." && continue
+      append_lines_before_close "$cfile" "$(nix_attr_line "\"${calias}\"" "inputs.${ident}.containers.\${system}.${c}")"
+      git add "$cfile" 2>/dev/null || true
+    done < <(discover_containers "github:${pin_owner}/${pin_repo}/${ref}" "$csystem")
   fi
 
   git add flake.nix flake.lock "$file" 2>/dev/null || true
@@ -2577,6 +2769,16 @@ __generate-input-file)
   shift
   [[ $# -ge 2 ]] || die "Usage: inputman __generate-input-file <name> <pkg=alias>..."
   generate_input_file "$@"
+  ;;
+__discover-containers)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __discover-containers <url> <system>"
+  discover_containers "$1" "$2"
+  ;;
+__generate-container-file)
+  shift
+  [[ $# -ge 1 ]] || die "Usage: inputman __generate-container-file <name> [container=alias]..."
+  generate_container_file "$@"
   ;;
 __patch-flake-tidy)
   patch_flake_tidy

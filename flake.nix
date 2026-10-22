@@ -126,6 +126,11 @@
         pre-commit-hooks.follows = "pre-commit-hooks";
       };
     };
+
+    giglab-dev = {
+      url = "github:gignsky/giglab.dev";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
   };
 
   outputs =
@@ -187,9 +192,27 @@
       # Expose news for consumers
       inherit news;
 
+      # Containers published by inputs (inputMan-managed aggregators under
+      # containers/inputs/); see gigpkgs.containers.fromInputs.
+      containers.${system} = import ./containers { inherit inputs system; };
+
       # NixOS modules — auto-discovered from modules/nixos/ (+ inputMan-managed
       # aggregators under modules/nixos/inputs/).
-      nixosModules = import ./modules/nixos { inherit lib inputs; };
+      nixosModules =
+        let
+          modules = import ./modules/nixos { inherit lib inputs; };
+        in
+        modules
+        // {
+          # The engine module needs to see this flake's containers; auto-discovery
+          # only imports paths, so hand them in here.
+          containers =
+            { pkgs, ... }:
+            {
+              imports = [ modules.containers ];
+              gigpkgs.containers.available = self.containers.${pkgs.stdenv.hostPlatform.system} or { };
+            };
+        };
 
       # Home Manager modules — auto-discovered from modules/home/ (+ inputMan-managed
       # aggregators under modules/home/inputs/).

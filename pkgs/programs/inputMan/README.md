@@ -23,6 +23,10 @@ adds inputs, wires follows, exposes packages, and auto-discovers
 - `inputman branch <name> [branch]` — point an input at a different branch and
   relock it; fuzzy-picks from the remote's branches via `fzf` when none is
   given.
+- `inputman install` also discovers `containers.<system>.*` on the input and
+  writes `containers/inputs/<name>.nix`; `update` picks up new containers and
+  reports container image version changes in its news entry; `pin` adds a
+  `<container>-<version>` alias for the frozen input (`--no-containers` skips).
 - `inputman doctor [--fix]` — report inputs that track gigpkgs (a circular
   dependency) with the exact `-f` overrides that break the loop; `--fix`
   applies them to `flake.nix` and relocks. Exits non-zero when it finds any
@@ -225,3 +229,30 @@ overridden.
 - `inputman doctor` is the read-only audit (and `--fix` the repair) for
   everything already in the repo. The `no-circular-gigpkgs` flake check fails
   if `flake.lock` contains gigpkgs itself as an input.
+
+## Containers
+
+An input that publishes `containers.<system>.<name>` (see giglab.dev's
+`nix/container-config.nix`) is exposed as `containers.<system>.<name>` from
+gigpkgs, via `containers/inputs/<input>.nix`. Each value is the input's
+container spec: its fill-in items, `imageFile`, and a `service` attrset that
+`virtualisation.oci-containers.containers.<name>` accepts verbatim.
+
+A host runs one with the engine module:
+
+```nix
+gigpkgs.containers = {
+  enable = true;
+  fromInputs.giglab = {
+    enable = true;
+    environmentFiles = [ config.sops.secrets."giglab-env".path ]; # host facts
+    volumes = [ "/var/lib/giglab:/data" ];
+    # overrides.ports = [ "127.0.0.1:9000:8800/tcp" ];            # replaces
+  };
+};
+```
+
+`environmentFiles` and `volumes` are appended to the spec's own; `overrides`
+replaces whole attributes. To roll back, `inputman pin <input> <version>`
+materializes `<container>-<version>` and the host can point at it (e.g. via an
+override of `image`/`imageFile` or by running that spec as a service).
