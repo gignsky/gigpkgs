@@ -23,6 +23,10 @@ adds inputs, wires follows, exposes packages, and auto-discovers
 - `inputman branch <name> [branch]` — point an input at a different branch and
   relock it; fuzzy-picks from the remote's branches via `fzf` when none is
   given.
+- `inputman doctor [--fix]` — report inputs that track gigpkgs (a circular
+  dependency) with the exact `-f` overrides that break the loop; `--fix`
+  applies them to `flake.nix` and relocks. Exits non-zero when it finds any
+  without `--fix`.
 
 ## Install examples
 
@@ -192,3 +196,32 @@ derivation, for instance) simply report the revision diff.
   by name to `flake.nix` explicitly.
 - Module aggregators generated under `modules/<home|nixos>/inputs/` are picked
   up automatically by `modules/<home|nixos>/default.nix`.
+
+## Circular gigpkgs tracking
+
+An input whose own `nixpkgs` is `github:gignsky/gigpkgs/<ref>` makes gigpkgs
+depend on an older copy of itself plus a second nixpkgs. inputMan detects this
+from the input's own lock (`nix flake metadata --json` for a new input or pin,
+`flake.lock` for an installed one) and adds the overrides that break the loop:
+
+| Input tracks | Gets |
+|---|---|
+| `gigpkgs/gigpkgs-unstable` | `nixpkgs=nixpkgs-unstable` |
+| `gigpkgs/gigos-unstable` | `nixpkgs=nixos-unstable` |
+| `gigpkgs/gigos-NNNN` | `nixpkgs=nixos-NNNN` |
+| `gigpkgs` (default branch / trunk) | `nixpkgs=nixpkgs` |
+
+Inputs that follow *through* the tracking input (`nixpkgs/pre-commit-hooks`,
+`nixpkgs/home-manager`, ...) are re-pointed at gigpkgs' own top-level input of
+that name, since the reach-through path stops existing once `nixpkgs` is
+overridden.
+
+- `install` and `pin` (and so the automatic pins from `update`/`branch`) add
+  the detected follows on their own. A `-f` you pass for the same key wins.
+  `--no-auto-follows` turns it off for `install`.
+- `update` and `branch` re-check after relocking, since an upstream can change
+  its nixpkgs ref; they patch `flake.nix` and relock, restoring both files if
+  that fails.
+- `inputman doctor` is the read-only audit (and `--fix` the repair) for
+  everything already in the repo. The `no-circular-gigpkgs` flake check fails
+  if `flake.lock` contains gigpkgs itself as an input.
