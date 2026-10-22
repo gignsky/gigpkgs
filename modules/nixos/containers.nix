@@ -14,6 +14,22 @@
 }:
 let
   cfg = config.gigpkgs.containers;
+  enabledFromInputs = lib.filterAttrs (_: c: c.enable) cfg.fromInputs;
+
+  # The published `service` attrset, with the host's additions and overrides.
+  fromInputService =
+    name: c:
+    let
+      spec = cfg.available.${name}.service;
+      merged = spec // c.overrides;
+    in
+    merged
+    // lib.optionalAttrs (c.environmentFiles != [ ]) {
+      environmentFiles = (merged.environmentFiles or [ ]) ++ c.environmentFiles;
+    }
+    // lib.optionalAttrs (c.volumes != [ ]) {
+      volumes = (merged.volumes or [ ]) ++ c.volumes;
+    };
 in
 {
   options.gigpkgs.containers = {
@@ -38,6 +54,58 @@ in
       '';
     };
 
+    available = lib.mkOption {
+      type = lib.types.attrsOf lib.types.anything;
+      default = { };
+      internal = true;
+      description = ''
+        Container specs published by gigpkgs' flake inputs, by name (the flake's
+        `containers.<system>`). Filled in by `gigpkgs.nixosModules.containers`;
+        not meant to be set by hand.
+      '';
+    };
+
+    fromInputs = lib.mkOption {
+      default = { };
+      example = lib.literalExpression ''
+        {
+          giglab = {
+            enable = true;
+            environmentFiles = [ config.sops.secrets."giglab-env".path ];
+            volumes = [ "/var/lib/giglab:/data" ];
+          };
+        }
+      '';
+      description = ''
+        Containers that a gigpkgs flake input publishes (found under
+        `containers.<system>`, managed by inputMan), run as services. The
+        input supplies the image and the host-agnostic spec; the host adds what
+        only it knows (secret env files, volumes) or overrides it outright.
+      '';
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            enable = lib.mkEnableOption "this input-published container";
+            overrides = lib.mkOption {
+              type = lib.types.attrsOf lib.types.anything;
+              default = { };
+              description = "Attributes replacing the published spec's (e.g. `ports`, `environment`).";
+            };
+            environmentFiles = lib.mkOption {
+              type = lib.types.listOf (lib.types.either lib.types.path lib.types.str);
+              default = [ ];
+              description = "Env files appended to the spec's own (host paths, e.g. sops secrets).";
+            };
+            volumes = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              description = "Volumes appended to the spec's own, as `host:container`.";
+            };
+          };
+        }
+      );
+    };
+
     services = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = { };
@@ -60,6 +128,17 @@ in
 
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
+      {
+        assertions = lib.mapAttrsToList (name: _: {
+          assertion = cfg.available ? ${name};
+          message = "gigpkgs.containers.fromInputs.${name}: no such container in gigpkgs (available: ${lib.concatStringsSep ", " (lib.attrNames cfg.available)}). Install it with `inputman install`.";
+        }) enabledFromInputs;
+
+        gigpkgs.containers.services = lib.mapAttrs fromInputService (
+          lib.filterAttrs (name: _: cfg.available ? ${name}) enabledFromInputs
+        );
+      }
+
       {
         virtualisation.oci-containers.backend = cfg.backend;
         # Pass the declared services through, defaulting autoStart to true.

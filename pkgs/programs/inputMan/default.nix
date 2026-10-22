@@ -2,7 +2,7 @@
 let
   pkg = pkgs.stdenv.mkDerivation {
     pname = "inputman";
-    version = "0.3.0";
+    version = "0.4.0";
 
     src = ./.;
 
@@ -60,6 +60,9 @@ pkg
           grep -q -- "--no-branch" help_output
           grep -q -- "--no-modules" help_output
           grep -q -- "--no-commit" help_output
+          grep -q "doctor" help_output
+          grep -q -- "--no-containers" help_output
+          grep -q -- "--no-auto-follows" help_output
 
           echo "Help output verified" > $out
         '';
@@ -222,8 +225,9 @@ pkg
 
           inputman __patch-flake-add gigvim github:gignsky/gigvim nixpkgs=nixpkgs
 
-          grep -q 'gigvim.url = "github:gignsky/gigvim";' flake.nix
-          grep -q 'gigvim.inputs.nixpkgs.follows = "nixpkgs";' flake.nix
+          grep -q 'gigvim = {' flake.nix
+          grep -q 'url = "github:gignsky/gigvim";' flake.nix
+          grep -q 'inputs.nixpkgs.follows = "nixpkgs";' flake.nix
           grep -q '# keep this comment near closing' flake.nix
 
           echo "patch_flake_add verified" > $out
@@ -253,15 +257,15 @@ pkg
 
           # Slash-separated nested follows
           inputman __patch-flake-add roll-flow github:gignsky/roll-flow gigpkgs/nixpkgs=nixpkgs-master
-          grep -q 'roll-flow.inputs.gigpkgs.inputs.nixpkgs.follows = "nixpkgs-master";' flake.nix
+          grep -q 'inputs.gigpkgs.inputs.nixpkgs.follows = "nixpkgs-master";' flake.nix
 
           # Dot-separated nested follows
           inputman __patch-flake-add other github:foo/other a.b.c=target
-          grep -q 'other.inputs.a.inputs.b.inputs.c.follows = "target";' flake.nix
+          grep -q 'inputs.a.inputs.b.inputs.c.follows = "target";' flake.nix
 
           # Empty follows (bare -f)
           inputman __patch-flake-add self-follow github:foo/self gigpkgs=
-          grep -q 'self-follow.inputs.gigpkgs.follows = "";' flake.nix
+          grep -q 'inputs.gigpkgs.follows = "";' flake.nix
 
           echo "nested follows verified" > $out
         '';
@@ -371,8 +375,8 @@ pkg
 
           inputman __patch-flake-set-url roll-flow github:gignsky/roll-flow/some-branch
 
-          grep -q 'roll-flow.url = "github:gignsky/roll-flow/some-branch";' flake.nix
-          grep -q 'roll-flow.inputs.nixpkgs.follows = "nixpkgs";' flake.nix
+          grep -q 'url = "github:gignsky/roll-flow/some-branch";' flake.nix
+          grep -q 'inputs.nixpkgs.follows = "nixpkgs";' flake.nix
           grep -q 'nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";' flake.nix
 
           if inputman __patch-flake-set-url not-an-input github:foo/bar > output 2>&1; then
@@ -383,6 +387,256 @@ pkg
           grep -q "could not find" output
 
           echo "patch_flake_set_url verified" > $out
+        '';
+
+    gigpkgs-channel-input =
+      pkgs.runCommand "inputman-gigpkgs-channel-input-test"
+        {
+          buildInputs = [ pkg ];
+        }
+        ''
+          set -e
+          test "$(inputman __gigpkgs-channel-input gigpkgs-unstable)" = "nixpkgs-unstable"
+          test "$(inputman __gigpkgs-channel-input gigos-unstable)" = "nixos-unstable"
+          test "$(inputman __gigpkgs-channel-input gigos-2605)" = "nixos-2605"
+          test "$(inputman __gigpkgs-channel-input master)" = "nixpkgs"
+          test "$(inputman __gigpkgs-channel-input "")" = "nixpkgs"
+          echo "gigpkgs_channel_input verified" > $out
+        '';
+
+    detect-circular-follows =
+      pkgs.runCommand "inputman-detect-circular-follows-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          # A repo lock: `foo` tracks gigpkgs@gigos-2605 and follows through it;
+          # `bar` tracks gigpkgs on its default branch; `clean` does not.
+          cat > repo.lock <<'LOCK'
+          {
+            "nodes": {
+              "root": { "inputs": { "foo": "foo", "bar": "bar", "clean": "clean", "nixpkgs": "nixpkgs" } },
+              "nixpkgs": { "original": { "owner": "NixOS", "repo": "nixpkgs", "type": "github" } },
+              "foo": { "inputs": { "nixpkgs": "gp_a", "pre-commit-hooks": ["foo", "nixpkgs", "pre-commit-hooks"], "utils": "utils" } },
+              "bar": { "inputs": { "nixpkgs": "gp_b" } },
+              "clean": { "inputs": { "nixpkgs": ["nixpkgs"], "utils": "utils" } },
+              "gp_a": { "original": { "owner": "gignsky", "repo": "gigpkgs", "ref": "gigos-2605", "type": "github" } },
+              "gp_b": { "original": { "owner": "gignsky", "repo": "gigpkgs", "type": "github" } },
+              "utils": { "original": { "owner": "numtide", "repo": "flake-utils", "type": "github" } }
+            },
+            "root": "root",
+            "version": 7
+          }
+          LOCK
+
+          inputman __detect-circular-follows repo.lock foo foo > foo.out
+          grep -qx "nixpkgs=nixos-2605" foo.out
+          grep -qx "pre-commit-hooks=pre-commit-hooks" foo.out
+          test "$(wc -l < foo.out)" = 2
+
+          inputman __detect-circular-follows repo.lock bar bar > bar.out
+          grep -qx "nixpkgs=nixpkgs" bar.out
+          test "$(wc -l < bar.out)" = 1
+
+          inputman __detect-circular-follows repo.lock clean clean > clean.out
+          test ! -s clean.out
+
+          # A sub-lock (as `nix flake metadata --json` reports it): the
+          # inspected node is the lock's own root, so follows paths carry no
+          # input-name prefix.
+          cat > sub.lock <<'LOCK'
+          {
+            "nodes": {
+              "root": { "inputs": { "nixpkgs": "gp", "pre-commit-hooks": ["nixpkgs", "pre-commit-hooks"] } },
+              "gp": { "original": { "owner": "gignsky", "repo": "gigpkgs", "ref": "gigpkgs-unstable", "type": "github" } }
+            },
+            "root": "root",
+            "version": 7
+          }
+          LOCK
+          inputman __detect-circular-follows sub.lock root > sub.out
+          grep -qx "nixpkgs=nixpkgs-unstable" sub.out
+          grep -qx "pre-commit-hooks=pre-commit-hooks" sub.out
+
+          echo "detect_circular_follows verified" > $out
+        '';
+
+    patch-flake-follows =
+      pkgs.runCommand "inputman-patch-flake-follows-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          cat > flake.nix <<'FLAKE'
+          {
+              inputs = {
+                  nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+                  roll-flow.url = "github:gignsky/roll-flow";
+                  other.url = "github:foo/other";
+              };
+              outputs = { self, ... }: { };
+          }
+          FLAKE
+
+          inputman __patch-flake-follows roll-flow nixpkgs=nixpkgs-unstable pre-commit-hooks=pre-commit-hooks
+
+          # Two follows: one `roll-flow` block with a single `inputs` set (no
+          # repeated keys for statix), and the other inputs untouched.
+          grep -q 'roll-flow = {' flake.nix
+          grep -q 'nixpkgs.follows = "nixpkgs-unstable";' flake.nix
+          grep -q 'pre-commit-hooks.follows = "pre-commit-hooks";' flake.nix
+          test "$(grep -c 'inputs = {' flake.nix)" = 2   # the outer block + roll-flow's
+          grep -q 'other.url = "github:foo/other";' flake.nix
+
+          # Idempotent: a key that is already declared is not duplicated.
+          inputman __patch-flake-follows roll-flow nixpkgs=nixpkgs-unstable
+          test "$(grep -c 'nixpkgs.follows = "nixpkgs-unstable"' flake.nix)" = 1
+
+          if inputman __patch-flake-follows missing nixpkgs=nixpkgs > output 2>&1; then
+            echo "patching a missing input should fail"; cat output; exit 1
+          fi
+          grep -q "could not find" output
+
+          echo "patch_flake_follows verified" > $out
+        '';
+
+    flake-edits-pass-hooks =
+      pkgs.runCommand "inputman-flake-edits-pass-hooks-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+            pkgs.nixfmt
+            pkgs.statix
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          cat > flake.nix <<'FLAKE'
+          {
+            inputs = {
+              nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+              # about gone
+              gone.url = "github:x/gone";
+              gone.inputs.nixpkgs.follows = "nixpkgs";
+
+              claude-desktop.url = "github:heytcass/claude-desktop-linux-flake";
+              claude-desktop.inputs.nixpkgs.follows = "nixpkgs";
+              claude-desktop.inputs.flake-utils.follows = "nixpkgs";
+            };
+            outputs = { self, ... }: { };
+          }
+          FLAKE
+
+          check() {
+            nixfmt --check flake.nix
+            statix check flake.nix
+          }
+
+          # Every editing operation must leave flake.nix passing the nixfmt and
+          # statix pre-commit hooks (no repeated `name.` keys, `};` indented).
+          inputman __patch-flake-tidy
+          grep -q 'claude-desktop = {' flake.nix
+          check
+
+          inputman __patch-flake-add gigvim github:gignsky/gigvim nixpkgs=nixpkgs-unstable home-manager=home-manager
+          grep -q 'gigvim = {' flake.nix
+          test "$(grep -c 'inputs = {' flake.nix)" = 3   # outer + claude-desktop + gigvim
+          check
+
+          inputman __patch-flake-follows gigvim extra=extra
+          grep -q 'extra.follows = "extra";' flake.nix
+          check
+
+          inputman __patch-flake-set-url gigvim github:gignsky/gigvim/other
+          grep -q 'url = "github:gignsky/gigvim/other";' flake.nix
+          grep -q 'home-manager.follows = "home-manager";' flake.nix
+          check
+
+          inputman __patch-flake-remove gone
+          if grep -q 'gone' flake.nix; then
+            echo "gone (and its comment) should be removed"; cat flake.nix; exit 1
+          fi
+          check
+
+          echo "flake edits pass the pre-commit hooks" > $out
+        '';
+
+    generated-aggregator-passes-nixfmt =
+      pkgs.runCommand "inputman-generated-aggregator-nixfmt-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+            pkgs.nixfmt
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          # A long package name pushes its line past 100 columns, which nixfmt
+          # wraps; the generator must emit the wrapped form itself.
+          inputman __generate-input-file claude-desktop \
+            claude-desktop=claude-desktop \
+            claude-desktop-with-fhs=claude-desktop-claude-desktop-with-fhs > out.nix
+          grep -q '^  claude-desktop-claude-desktop-with-fhs =$' out.nix
+          nixfmt --check out.nix
+
+          echo "generated aggregator passes nixfmt" > $out
+        '';
+
+    generate-container-file =
+      pkgs.runCommand "inputman-generate-container-file-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+            pkgs.nixfmt
+          ];
+        }
+        ''
+          set -e
+          inputman __generate-container-file giglab-dev giglab=giglab "giglab=giglab-0.0.1" > out.nix
+          grep -q '^{ inputs, system }:$' out.nix
+          grep -q '^  giglab = inputs.giglab-dev.containers.''${system}.giglab;$' out.nix
+          # Aliases that are not plain identifiers must be quoted.
+          grep -q '^  "giglab-0.0.1" = inputs.giglab-dev.containers.''${system}.giglab;$' out.nix
+          nixfmt --check out.nix
+
+          echo "generate_container_file verified" > $out
+        '';
+
+    discover-containers-fallback =
+      pkgs.runCommand "inputman-discover-containers-fallback-test"
+        {
+          buildInputs = [ pkg ];
+        }
+        ''
+          set -e
+          # An unreadable flake publishes no containers; that is not an error.
+          inputman __discover-containers "not-a-valid-flake-url" "x86_64-linux" > output 2> /dev/null
+          test ! -s output
+          echo "discover_containers fallback verified" > $out
         '';
 
     shellcheck =
