@@ -27,6 +27,18 @@
 # Triggers on `main`, `master`, and `rolling` so the planned trunk rename
 # (main -> master, per gigpkgs#14) needs no flag-day change here, and so the
 # rolling-sourced channels get projected on every push to rolling.
+#
+# Runner: every job below can run on spacedock's self-hosted runner (native
+# Nix, no per-run install, and it shares spacedock's store/binary cache)
+# instead of `ubuntu-latest`, gated behind the `USE_SPACEDOCK_RUNNER` repo
+# variable so flipping it on doesn't require touching this file once the
+# runner is registered. The `check` job also excludes `pull_request` from the
+# runner choice, which keeps our OWN in-review PRs off real hardware — it is
+# NOT a security boundary against a fork PR (which can edit this very file to
+# ignore that). This repo is public, so before registering a gigpkgs runner,
+# set repo Settings -> Actions -> General -> Fork pull request workflows to
+# "Require approval for all outside collaborators", and keep that runner's
+# NixOS service unprivileged (no sudo rules, no extra secrets).
 name: channels
 
 on:
@@ -45,10 +57,13 @@ concurrency:
 jobs:
   # Bare-minimum gate: the trunk must evaluate before we derive channels from it.
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') && fromJSON('["self-hosted","spacedock"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
+      # Skipped on spacedock: Nix is already native there, managed by NixOS —
+      # this action would otherwise fight the box's own nix.conf.
+      - if: ${{ !(github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') }}
+        uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -67,7 +82,7 @@ jobs:
         && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
       || (github.event_name == 'workflow_dispatch'
         && (github.ref_name == 'main' || github.ref_name == 'master'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') && fromJSON('["self-hosted","spacedock"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -81,7 +96,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: cachix/install-nix-action@v27
+      - if: ${{ !(github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') }}
+        uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -104,16 +120,18 @@ jobs:
           #    (e.g. gigpkgs-26.05 -> nixpkgs IS nixos-2605), not merely
           #    channel-aware outputs. The `inputs` block cannot read channel.nix
           #    itself, so the projection rewrites it here. Anchored to the
-          #    top-level binding so the nested `inputs.nixpkgs.follows = …` lines
-          #    (home-manager, pre-commit) are left untouched. Fail loudly if the
+          #    top-level binding (exactly 4-space indent, a direct child of `inputs = {`)
+          #    so nested `nixpkgs.follows = …` lines -- both `inputs.nixpkgs.follows`
+          #    and the `inputs = { nixpkgs.follows = …; }` form inputMan writes for
+          #    gigvim/roll-flow -- are left untouched. Fail loudly if the
           #    trunk line ever moves or reformats, rather than silently skipping.
-          matched=$(grep -cE '^[[:space:]]*nixpkgs\.follows = "[^"]*";' flake.nix || true)
+          matched=$(grep -cE '^ {4}nixpkgs\.follows = "[^"]*";' flake.nix || true)
           if [ "$matched" -ne 1 ]; then
             echo "::error::expected exactly one top-level 'nixpkgs.follows' line in flake.nix, found $matched"
             exit 1
           fi
-          sed -i -E 's|^([[:space:]]*)nixpkgs\.follows = "[^"]*";|\1nixpkgs.follows = "${{ matrix.channel }}";|' flake.nix
-          grep -qE "^[[:space:]]*nixpkgs\.follows = \"${{ matrix.channel }}\";" flake.nix
+          sed -i -E 's|^( {4})nixpkgs\.follows = "[^"]*";|\1nixpkgs.follows = "${{ matrix.channel }}";|' flake.nix
+          grep -qE "^ {4}nixpkgs\.follows = \"${{ matrix.channel }}\";" flake.nix
 
           # 3. Relock so flake.lock reflects the repointed nixpkgs input and picks
           #    up any missing flake=false siblings (e.g. channel-aware roll-flow).
@@ -136,7 +154,7 @@ jobs:
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/rolling')
       || (github.event_name == 'workflow_dispatch' && github.ref_name == 'rolling')
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') && fromJSON('["self-hosted","spacedock"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -150,7 +168,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: cachix/install-nix-action@v27
+      - if: ${{ !(github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') }}
+        uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -173,16 +192,18 @@ jobs:
           #    (e.g. gigpkgs-unstable -> nixpkgs IS nixpkgs-unstable), not merely
           #    channel-aware outputs. The `inputs` block cannot read channel.nix
           #    itself, so the projection rewrites it here. Anchored to the
-          #    top-level binding so the nested `inputs.nixpkgs.follows = …` lines
-          #    (home-manager, pre-commit) are left untouched. Fail loudly if the
+          #    top-level binding (exactly 4-space indent, a direct child of `inputs = {`)
+          #    so nested `nixpkgs.follows = …` lines -- both `inputs.nixpkgs.follows`
+          #    and the `inputs = { nixpkgs.follows = …; }` form inputMan writes for
+          #    gigvim/roll-flow -- are left untouched. Fail loudly if the
           #    trunk line ever moves or reformats, rather than silently skipping.
-          matched=$(grep -cE '^[[:space:]]*nixpkgs\.follows = "[^"]*";' flake.nix || true)
+          matched=$(grep -cE '^ {4}nixpkgs\.follows = "[^"]*";' flake.nix || true)
           if [ "$matched" -ne 1 ]; then
             echo "::error::expected exactly one top-level 'nixpkgs.follows' line in flake.nix, found $matched"
             exit 1
           fi
-          sed -i -E 's|^([[:space:]]*)nixpkgs\.follows = "[^"]*";|\1nixpkgs.follows = "${{ matrix.channel }}";|' flake.nix
-          grep -qE "^[[:space:]]*nixpkgs\.follows = \"${{ matrix.channel }}\";" flake.nix
+          sed -i -E 's|^( {4})nixpkgs\.follows = "[^"]*";|\1nixpkgs.follows = "${{ matrix.channel }}";|' flake.nix
+          grep -qE "^ {4}nixpkgs\.follows = \"${{ matrix.channel }}\";" flake.nix
 
           # 3. Relock so flake.lock reflects the repointed nixpkgs input and picks
           #    up any missing flake=false siblings (e.g. channel-aware roll-flow).
