@@ -28,50 +28,104 @@
 
     fupdate.url = "github:gignsky/fupdate";
 
-    gigvim.url = "github:gignsky/gigvim";
-    gigvim.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    gigvim.inputs.home-manager.follows = "home-manager";
+    gigvim = {
+      url = "github:gignsky/gigvim";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        home-manager.follows = "home-manager";
+      };
+    };
 
-    roll-flow.url = "github:gignsky/roll-flow/develop";
-    roll-flow.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow = {
+      url = "github:gignsky/roll-flow/main";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
     claude-desktop.url = "github:heytcass/claude-desktop-linux-flake";
     claude-desktop.inputs.nixpkgs.follows = "nixpkgs";
 
-    roll-flow-0_2_5.url = "github:gignsky/roll-flow/15683995d37e93f90e991303ccfa111f37fe51fb";
-    roll-flow-0_2_5.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_5.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow-0_2_5 = {
+      url = "github:gignsky/roll-flow/15683995d37e93f90e991303ccfa111f37fe51fb";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
-    roll-flow-0_2_6-dev.url = "github:gignsky/roll-flow/ec731b2deb8c5f5d9f518563e548e08f4fd593aa";
-    roll-flow-0_2_6-dev.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_6-dev.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow-0_2_6-dev = {
+      url = "github:gignsky/roll-flow/ec731b2deb8c5f5d9f518563e548e08f4fd593aa";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
-    roll-flow-0_2_7.url = "github:gignsky/roll-flow/7d42a7f97bf9404e17a2b52580fcbd3bf3f9513c";
-    roll-flow-0_2_7.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_7.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow-0_2_7 = {
+      url = "github:gignsky/roll-flow/7d42a7f97bf9404e17a2b52580fcbd3bf3f9513c";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
-    roll-flow-0_2_8.url = "github:gignsky/roll-flow/f64328f0b40819617b3933f6f15f88ff12f3fa1c";
-    roll-flow-0_2_8.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_8.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow-0_2_8 = {
+      url = "github:gignsky/roll-flow/f64328f0b40819617b3933f6f15f88ff12f3fa1c";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
-    roll-flow-0_2_9.url = "github:gignsky/roll-flow/035f841edfcf2ee30e9554364ba3584226d496be";
-    roll-flow-0_2_9.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_9.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow-0_2_9 = {
+      url = "github:gignsky/roll-flow/035f841edfcf2ee30e9554364ba3584226d496be";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
-    roll-flow-0_2_9-dev.url = "github:gignsky/roll-flow/b9475a7a4401e45be3b1649df1d63d2e3240b376";
-    roll-flow-0_2_9-dev.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_9-dev.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow-0_2_9-dev = {
+      url = "github:gignsky/roll-flow/b9475a7a4401e45be3b1649df1d63d2e3240b376";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
-    roll-flow-0_2_10.url = "github:gignsky/roll-flow/16b516238a9d4f041c02ce6f049665332bd341bb";
-    roll-flow-0_2_10.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_10.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow-0_2_10 = {
+      url = "github:gignsky/roll-flow/16b516238a9d4f041c02ce6f049665332bd341bb";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
-    roll-flow-0_2_11.url = "github:gignsky/roll-flow/ef98701c006cf8693038485a6be227ad1d501fe8";
-    roll-flow-0_2_11.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_11.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+    roll-flow-0_2_11 = {
+      url = "github:gignsky/roll-flow/ef98701c006cf8693038485a6be227ad1d501fe8";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
 
-    roll-flow-0_2_12-dev.url = "github:gignsky/roll-flow/8fb70226565442e2326ede9d7c0c658764c34045";
+    roll-flow-0_2_12-dev = {
+      url = "github:gignsky/roll-flow/8fb70226565442e2326ede9d7c0c658764c34045";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
+
+    roll-flow-0_2_13 = {
+      url = "github:gignsky/roll-flow/9985941dfb459ddfb8f5987e1310650c6878423a";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
   };
 
   outputs =
