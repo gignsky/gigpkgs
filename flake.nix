@@ -30,7 +30,7 @@
 
     gigvim.url = "github:gignsky/gigvim";
 
-    roll-flow.url = "github:gignsky/roll-flow/develop";
+    roll-flow.url = "github:gignsky/roll-flow/main";
 
   
     claude-desktop.url = "github:heytcass/claude-desktop-linux-flake";
@@ -53,6 +53,8 @@
     roll-flow-0_2_11.url = "github:gignsky/roll-flow/ef98701c006cf8693038485a6be227ad1d501fe8";
 
     roll-flow-0_2_12-dev.url = "github:gignsky/roll-flow/8fb70226565442e2326ede9d7c0c658764c34045";
+
+    roll-flow-0_2_13.url = "github:gignsky/roll-flow/9985941dfb459ddfb8f5987e1310650c6878423a";
 };
 
   outputs =
