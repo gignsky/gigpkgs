@@ -2,7 +2,7 @@
 let
   pkg = pkgs.stdenv.mkDerivation {
     pname = "inputman";
-    version = "0.3.0";
+    version = "0.4.0";
 
     src = ./.;
 
@@ -60,6 +60,8 @@ pkg
           grep -q -- "--no-branch" help_output
           grep -q -- "--no-modules" help_output
           grep -q -- "--no-commit" help_output
+          grep -q "doctor" help_output
+          grep -q -- "--no-auto-follows" help_output
 
           echo "Help output verified" > $out
         '';
@@ -383,6 +385,129 @@ pkg
           grep -q "could not find" output
 
           echo "patch_flake_set_url verified" > $out
+        '';
+
+    gigpkgs-channel-input =
+      pkgs.runCommand "inputman-gigpkgs-channel-input-test"
+        {
+          buildInputs = [ pkg ];
+        }
+        ''
+          set -e
+          test "$(inputman __gigpkgs-channel-input gigpkgs-unstable)" = "nixpkgs-unstable"
+          test "$(inputman __gigpkgs-channel-input gigos-unstable)" = "nixos-unstable"
+          test "$(inputman __gigpkgs-channel-input gigos-2605)" = "nixos-2605"
+          test "$(inputman __gigpkgs-channel-input master)" = "nixpkgs"
+          test "$(inputman __gigpkgs-channel-input "")" = "nixpkgs"
+          echo "gigpkgs_channel_input verified" > $out
+        '';
+
+    detect-circular-follows =
+      pkgs.runCommand "inputman-detect-circular-follows-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          # A repo lock: `foo` tracks gigpkgs@gigos-2605 and follows through it;
+          # `bar` tracks gigpkgs on its default branch; `clean` does not.
+          cat > repo.lock <<'LOCK'
+          {
+            "nodes": {
+              "root": { "inputs": { "foo": "foo", "bar": "bar", "clean": "clean", "nixpkgs": "nixpkgs" } },
+              "nixpkgs": { "original": { "owner": "NixOS", "repo": "nixpkgs", "type": "github" } },
+              "foo": { "inputs": { "nixpkgs": "gp_a", "pre-commit-hooks": ["foo", "nixpkgs", "pre-commit-hooks"], "utils": "utils" } },
+              "bar": { "inputs": { "nixpkgs": "gp_b" } },
+              "clean": { "inputs": { "nixpkgs": ["nixpkgs"], "utils": "utils" } },
+              "gp_a": { "original": { "owner": "gignsky", "repo": "gigpkgs", "ref": "gigos-2605", "type": "github" } },
+              "gp_b": { "original": { "owner": "gignsky", "repo": "gigpkgs", "type": "github" } },
+              "utils": { "original": { "owner": "numtide", "repo": "flake-utils", "type": "github" } }
+            },
+            "root": "root",
+            "version": 7
+          }
+          LOCK
+
+          inputman __detect-circular-follows repo.lock foo foo > foo.out
+          grep -qx "nixpkgs=nixos-2605" foo.out
+          grep -qx "pre-commit-hooks=pre-commit-hooks" foo.out
+          test "$(wc -l < foo.out)" = 2
+
+          inputman __detect-circular-follows repo.lock bar bar > bar.out
+          grep -qx "nixpkgs=nixpkgs" bar.out
+          test "$(wc -l < bar.out)" = 1
+
+          inputman __detect-circular-follows repo.lock clean clean > clean.out
+          test ! -s clean.out
+
+          # A sub-lock (as `nix flake metadata --json` reports it): the
+          # inspected node is the lock's own root, so follows paths carry no
+          # input-name prefix.
+          cat > sub.lock <<'LOCK'
+          {
+            "nodes": {
+              "root": { "inputs": { "nixpkgs": "gp", "pre-commit-hooks": ["nixpkgs", "pre-commit-hooks"] } },
+              "gp": { "original": { "owner": "gignsky", "repo": "gigpkgs", "ref": "gigpkgs-unstable", "type": "github" } }
+            },
+            "root": "root",
+            "version": 7
+          }
+          LOCK
+          inputman __detect-circular-follows sub.lock root > sub.out
+          grep -qx "nixpkgs=nixpkgs-unstable" sub.out
+          grep -qx "pre-commit-hooks=pre-commit-hooks" sub.out
+
+          echo "detect_circular_follows verified" > $out
+        '';
+
+    patch-flake-follows =
+      pkgs.runCommand "inputman-patch-flake-follows-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          cat > flake.nix <<'FLAKE'
+          {
+              inputs = {
+                  nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+                  roll-flow.url = "github:gignsky/roll-flow";
+                  other.url = "github:foo/other";
+              };
+              outputs = { self, ... }: { };
+          }
+          FLAKE
+
+          inputman __patch-flake-follows roll-flow nixpkgs=nixpkgs-unstable pre-commit-hooks=pre-commit-hooks
+
+          grep -q 'roll-flow.inputs.nixpkgs.follows = "nixpkgs-unstable";' flake.nix
+          grep -q 'roll-flow.inputs.pre-commit-hooks.follows = "pre-commit-hooks";' flake.nix
+          # Lands under roll-flow's url, not another input's.
+          grep -A1 'roll-flow.url' flake.nix | grep -q 'roll-flow.inputs'
+          grep -q 'other.url = "github:foo/other";' flake.nix
+
+          # Idempotent: a key that is already declared is not duplicated.
+          inputman __patch-flake-follows roll-flow nixpkgs=nixpkgs-unstable
+          test "$(grep -c 'roll-flow.inputs.nixpkgs.follows' flake.nix)" = 1
+
+          if inputman __patch-flake-follows missing nixpkgs=nixpkgs > output 2>&1; then
+            echo "patching a missing input should fail"; cat output; exit 1
+          fi
+          grep -q "could not find" output
+
+          echo "patch_flake_follows verified" > $out
         '';
 
     shellcheck =

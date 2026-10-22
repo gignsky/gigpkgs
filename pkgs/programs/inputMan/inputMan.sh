@@ -39,6 +39,10 @@ Commands:
                         are already materialized
   branch <name> [b]    Point an input at a different branch (fuzzy-picked via
                         fzf when no branch is given) and relock it
+  doctor [--fix]       Report inputs that track gigpkgs (a circular dependency)
+                        with the exact -f overrides that break the loop;
+                        --fix applies them to flake.nix and relocks. install,
+                        update, branch and pin apply them automatically
   help                 Show this help
 
 Install options:
@@ -56,6 +60,7 @@ Install options:
                          where <self> is derived from the current flake name.
                          Repeatable.
   --no-info              Skip flake metadata probe output
+  --no-auto-follows      Do not auto-add follows for inputs that track gigpkgs
   --no-branch            Skip creating add-input/<name> branch from origin/master
   --no-modules           Skip module auto-discovery
   --yes, -y              Accept prompts and commit without asking
@@ -242,6 +247,257 @@ normalize_follows_pair() {
   local value="${pair#*=}"
   key="${key//\//.}"
   printf '%s=%s' "$key" "$value"
+}
+
+# ── Circular nixpkgs tracking ───────────────────────────────────────────
+# An input whose own `nixpkgs` is github:gignsky/gigpkgs/<ref> makes gigpkgs
+# depend on (an older copy of) itself. These helpers find such inputs and work
+# out the follows that break the loop: the input should follow the nixpkgs
+# channel that <ref> is derived from, not gigpkgs.
+
+# Map a gigpkgs ref to the top-level gigpkgs input it is derived from
+# (see .github/workflows/channels.yml). Trunk refs map to `nixpkgs`, which
+# channel derivation already re-points on every derived branch.
+gigpkgs_channel_input() {
+  local ref="$1"
+  case "$ref" in
+  gigpkgs-unstable) printf 'nixpkgs-unstable' ;;
+  gigos-unstable) printf 'nixos-unstable' ;;
+  gigos-[0-9]*) printf 'nixos-%s' "${ref#gigos-}" ;;
+  "" | master | main | rolling) printf 'nixpkgs' ;;
+  *)
+    warn "Unknown gigpkgs ref '${ref}'; assuming it is trunk-derived (nixpkgs)." >&2
+    printf 'nixpkgs'
+    ;;
+  esac
+}
+
+# Is <name> a top-level input of this repo's flake.lock? True when there is no
+# flake.lock to check against (fixtures, fresh repos).
+gigpkgs_has_input() {
+  local name="$1"
+  [[ -f flake.lock ]] || return 0
+  jq -e --arg n "$name" '.nodes.root.inputs | has($n)' flake.lock >/dev/null 2>&1
+}
+
+# Scan one node of a lock file for inputs that track gigpkgs.
+#   $1 lock file   $2 node key to inspect   $3 root input name that follows
+#   paths are prefixed with (empty when $2 is the lock's own root)
+# Prints `key=target` lines in `inputman -f` syntax, one per override needed:
+#   - an input locked to gigpkgs        -> the channel input for its ref
+#   - an input following <tracker>/<x>  -> gigpkgs' own top-level <x>
+detect_circular_follows() {
+  local lock="$1" node="$2" prefix="${3:-}"
+  local kind key val target seg
+  while IFS=$'\t' read -r kind key val; do
+    [[ -n "$kind" ]] || continue
+    case "$kind" in
+    track) target=$(gigpkgs_channel_input "$val") ;;
+    via) target="$val" ;;
+    *) continue ;;
+    esac
+    seg="${target%%/*}"
+    if ! gigpkgs_has_input "$seg"; then
+      warn "Input '${key}' needs a follows to '${target}', but gigpkgs has no top-level '${seg}' input; skipped." >&2
+      continue
+    fi
+    printf '%s=%s\n' "$key" "$target"
+  done < <(
+    jq -r --arg node "$node" --arg prefix "$prefix" '
+      .nodes as $n
+      | ($n[$node].inputs // {}) as $ins
+      | ($ins | to_entries
+         | map(select((.value | type) == "string"
+                      and ($n[.value].original.repo // "") == "gigpkgs"
+                      and ($n[.value].original.owner // "") == "gignsky")
+               | {key: .key, ref: ($n[.value].original.ref // "")})) as $trk
+      | ($trk | map({(.key): .ref}) | add // {}) as $trkmap
+      | ($trk[] | "track\t\(.key)\t\(.ref)"),
+        ($ins | to_entries[] | select(.value | type == "array")
+         | (if $prefix != "" and .value[0] == $prefix then .value[1:] else .value end) as $p
+         | select(($p | length) >= 2 and ($trkmap | has($p[0])))
+         | "via\t\(.key)\t\($p[1:] | join("/"))")
+    ' "$lock"
+  )
+}
+
+# Overrides needed for an input already locked in ./flake.lock.
+detect_follows_installed() {
+  local name="$1" node
+  [[ -f flake.lock ]] || return 0
+  node=$(jq -r --arg n "$name" '.nodes.root.inputs[$n] | if type == "string" then . else empty end' flake.lock)
+  [[ -n "$node" ]] || return 0
+  detect_circular_follows flake.lock "$node" "$name"
+}
+
+# Overrides needed for an input that is not in the repo yet (install, pin):
+# its own lock, as nix reports it, is the source of truth.
+detect_follows_for_url() {
+  local url="$1" tmp
+  tmp=$(mktemp)
+  if ! nix flake metadata --json "$url" 2>/dev/null | jq '.locks' >"$tmp" 2>/dev/null; then
+    warn "Could not read the lock of '${url}'; skipping circular-follows detection." >&2
+    rm -f "$tmp"
+    return 0
+  fi
+  [[ "$(jq -r 'type' "$tmp")" == "object" ]] && detect_circular_follows "$tmp" root ""
+  rm -f "$tmp"
+}
+
+# Add follows lines to an input already present in flake.nix, right after its
+# `<name>.url` line. Keys already declared are left alone.
+#   usage: patch_flake_follows <name> key=target...
+patch_flake_follows() {
+  local name="$1"
+  shift
+  local follows_newline="" pair
+  for pair in "$@"; do
+    follows_newline+="$(normalize_follows_pair "$pair")"$'\n'
+  done
+
+  local perl_script
+  perl_script=$(
+    cat <<'PERL'
+    use strict;
+    use warnings;
+
+    my $n = $ENV{INPUT_NAME};
+    my @pairs = grep { length } split /\n/, ($ENV{INPUT_FOLLOWS} // "");
+    my $q = quotemeta($n);
+
+    $_ =~ /^([ \t]*)$q\.url\s*=\s*"[^"]*";[ \t]*\n/m
+      or die "inputMan: could not find '$n.url' in flake.nix (nested attrset form?)\n";
+    my ($indent, $end) = ($1, $+[0]);
+
+    my $insert = "";
+    for my $raw (@pairs) {
+      my ($k, $v) = split /=/, $raw, 2;
+      $v = "" unless defined $v;
+      my $chain = join('.inputs.', split /\./, $k);
+      next if $_ =~ /^[ \t]*$q\.inputs\.\Q$chain\E\.(?:follows|url)\s*=/m;
+      $insert .= qq{$indent$n.inputs.$chain.follows = "$v";\n};
+    }
+    substr($_, $end, 0, $insert);
+PERL
+  )
+
+  local err_file
+  err_file=$(mktemp)
+  if ! INPUT_NAME="$name" INPUT_FOLLOWS="$follows_newline" perl -i -0pe "$perl_script" flake.nix 2>"$err_file"; then
+    local err
+    err=$(cat "$err_file")
+    rm -f "$err_file"
+    die "Failed to patch flake.nix: ${err:-unknown patch error}"
+  fi
+  rm -f "$err_file"
+}
+
+# Install-time helper: add the detected overrides for <url> to the explicit
+# ones in the named array, unless the user already chose that key.
+#   usage: add_detected_follows <url> <array-name>
+add_detected_follows() {
+  local url="$1"
+  local -n arr="$2"
+  local pair key existing taken
+  while IFS= read -r pair; do
+    [[ -n "$pair" ]] || continue
+    key="${pair%%=*}"
+    taken=""
+    for existing in "${arr[@]}"; do
+      [[ "$(normalize_follows_pair "$existing")" == "${key}="* ]] && taken=1
+    done
+    if [[ -n "$taken" ]]; then
+      info "Keeping your --follows for '${key}' (detected: ${pair#*=})."
+    else
+      info "Circular gigpkgs tracking detected: following ${pair#*=} for '${key}'."
+      arr+=("$pair")
+    fi
+  done < <(detect_follows_for_url "$url")
+}
+
+# After a relock: if <name> has started tracking gigpkgs (an upstream can
+# change its nixpkgs ref at any time), declare the follows that break the
+# loop and relock. Restores flake.nix/flake.lock if that fails.
+ensure_no_circular_follows() {
+  local name="$1"
+  local -a pairs=()
+  local pair
+  while IFS= read -r pair; do
+    [[ -n "$pair" ]] && pairs+=("$pair")
+  done < <(detect_follows_installed "$name")
+  [[ ${#pairs[@]} -eq 0 ]] && return 0
+
+  info "'${name}' tracks gigpkgs; adding: ${pairs[*]}"
+  local backup
+  backup=$(mktemp -d)
+  cp flake.nix flake.lock "$backup/"
+  patch_flake_follows "$name" "${pairs[@]}"
+  if ! nix flake lock; then
+    cp "$backup/flake.nix" "$backup/flake.lock" .
+    rm -rf "$backup"
+    warn "Could not apply circular-follows fix for '${name}'; restored flake.nix/flake.lock. Add by hand: ${pairs[*]}"
+    return 0
+  fi
+  rm -rf "$backup"
+  git add flake.nix flake.lock 2>/dev/null || true
+  ok "Broke circular tracking for '${name}'"
+}
+
+cmd_doctor() {
+  local fix="" auto_commit="" no_commit=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --fix)
+      fix=1
+      shift
+      ;;
+    --yes | -y)
+      auto_commit=1
+      shift
+      ;;
+    --no-commit | -n)
+      no_commit=1
+      shift
+      ;;
+    -*) die "Unknown option: $1" ;;
+    *) die "Usage: inputman doctor [--fix] [options]" ;;
+    esac
+  done
+
+  [[ -f flake.nix && -f flake.lock ]] || die "No flake.nix/flake.lock found — run from the repo root"
+
+  local name pair found=0
+  local -A findings=()
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    local -a pairs=()
+    while IFS= read -r pair; do
+      [[ -n "$pair" ]] && pairs+=("$pair")
+    done < <(detect_follows_installed "$name")
+    if [[ ${#pairs[@]} -gt 0 ]]; then
+      findings["$name"]="${pairs[*]}"
+      found=1
+      warn "${name} tracks gigpkgs:"
+      for pair in "${pairs[@]}"; do
+        printf '    -f %s\n' "$pair" >&2
+      done
+    fi
+  done < <(jq -r '.nodes.root.inputs | to_entries[] | select(.value | type == "string") | .key' flake.lock)
+
+  if [[ "$found" -eq 0 ]]; then
+    ok "No circular gigpkgs tracking."
+    return 0
+  fi
+  [[ -n "$fix" ]] || die "Circular tracking found (re-run with --fix to apply the overrides)."
+
+  local -a to_fix
+  for name in "${!findings[@]}"; do
+    read -ra to_fix <<<"${findings[$name]}"
+    patch_flake_follows "$name" "${to_fix[@]}"
+  done
+  nix flake lock
+  git add flake.nix flake.lock
+  finalize_commit "inputMan: break circular gigpkgs tracking (${!findings[*]})" "$auto_commit" "$no_commit"
 }
 
 patch_flake_add() {
@@ -1105,6 +1361,7 @@ maybe_generate_module_aggregator() {
 cmd_install() {
   local url="" name="" packages_arg="" packages_flag="" auto_commit="" no_commit=""
   local no_info="" no_branch="" no_modules=""
+  local no_auto_follows=""
   local -a follows_pairs=()
 
   while [[ $# -gt 0 ]]; do
@@ -1131,6 +1388,10 @@ cmd_install() {
         follows_pairs+=("$(self_name)=")
         shift
       fi
+      ;;
+    --no-auto-follows)
+      no_auto_follows=1
+      shift
       ;;
     --no-info)
       no_info=1
@@ -1232,6 +1493,10 @@ cmd_install() {
   content=$(generate_input_file "$name" "${selection[@]}")
   printf '%s' "$content" >>"$input_file"
   ok "Wrote ${input_file}"
+
+  if [[ -z "$no_auto_follows" ]]; then
+    add_detected_follows "$url" follows_pairs
+  fi
 
   info "Adding input to flake.nix ..."
   INPUTMAN_CLEANUP_FLAKE=1
@@ -1457,6 +1722,7 @@ cmd_update() {
   info "Updating input '${name}' ..."
   nix flake update "$name"
   ok "flake.lock updated for '${name}'"
+  ensure_no_circular_follows "$name"
 
   local after_rev after_modified
   after_rev=$(locked_input_field "$name" rev)
@@ -1786,7 +2052,10 @@ materialize_version_package() {
     local owner repo
     read -r owner repo < <(github_owner_repo "$name" "pin")
     info "Materializing '${alias}' (flake input '${ident}') at ${ref} ..." >&2
-    patch_flake_add "$ident" "github:${owner}/${repo}/${ref}"
+    local pin_url="github:${owner}/${repo}/${ref}"
+    local -a pin_follows=()
+    add_detected_follows "$pin_url" pin_follows >&2
+    patch_flake_add "$ident" "$pin_url" "${pin_follows[@]}"
     if ! nix flake lock >&2; then
       git checkout -- flake.nix >/dev/null 2>&1 || true
       warn "Failed to lock '${ident}' for '${alias}'; skipped (rolled back flake.nix)." >&2
@@ -2033,6 +2302,7 @@ cmd_branch() {
     die "Failed to relock '${name}' against branch '${branch}'; rolled back flake.nix."
   fi
   ok "flake.nix and flake.lock updated for '${name}'"
+  ensure_no_circular_follows "$name"
 
   local after_rev after_modified
   after_rev=$(locked_input_field "$name" rev)
@@ -2140,6 +2410,31 @@ versions)
 branch)
   shift
   cmd_branch "$@"
+  ;;
+doctor)
+  shift
+  cmd_doctor "$@"
+  ;;
+__detect-circular-follows)
+  shift
+  [[ $# -ge 2 ]] || die "Usage: inputman __detect-circular-follows <lock> <node> [prefix]"
+  detect_circular_follows "$1" "$2" "${3:-}"
+  ;;
+__detect-follows-url)
+  shift
+  [[ $# -eq 1 ]] || die "Usage: inputman __detect-follows-url <flake-url>"
+  detect_follows_for_url "$1"
+  ;;
+__gigpkgs-channel-input)
+  shift
+  [[ $# -eq 1 ]] || die "Usage: inputman __gigpkgs-channel-input <ref>"
+  gigpkgs_channel_input "$1"
+  echo
+  ;;
+__patch-flake-follows)
+  shift
+  [[ $# -ge 2 ]] || die "Usage: inputman __patch-flake-follows <name> <key=target>..."
+  patch_flake_follows "$@"
   ;;
 __infer-name)
   shift
