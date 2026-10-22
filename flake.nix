@@ -72,8 +72,6 @@
     roll-flow-0_2_11.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
 
     roll-flow-0_2_12-dev.url = "github:gignsky/roll-flow/8fb70226565442e2326ede9d7c0c658764c34045";
-    roll-flow-0_2_12-dev.inputs.nixpkgs.follows = "nixpkgs-unstable";
-    roll-flow-0_2_12-dev.inputs.pre-commit-hooks.follows = "pre-commit-hooks";
   };
 
   outputs =
