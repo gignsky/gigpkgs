@@ -27,6 +27,18 @@
 # Triggers on `main`, `master`, and `rolling` so the planned trunk rename
 # (main -> master, per gigpkgs#14) needs no flag-day change here, and so the
 # rolling-sourced channels get projected on every push to rolling.
+#
+# Runner: every job below can run on spacedock's self-hosted runner (native
+# Nix, no per-run install, and it shares spacedock's store/binary cache)
+# instead of `ubuntu-latest`, gated behind the `USE_SPACEDOCK_RUNNER` repo
+# variable so flipping it on doesn't require touching this file once the
+# runner is registered. The `check` job also excludes `pull_request` from the
+# runner choice, which keeps our OWN in-review PRs off real hardware — it is
+# NOT a security boundary against a fork PR (which can edit this very file to
+# ignore that). This repo is public, so before registering a gigpkgs runner,
+# set repo Settings -> Actions -> General -> Fork pull request workflows to
+# "Require approval for all outside collaborators", and keep that runner's
+# NixOS service unprivileged (no sudo rules, no extra secrets).
 name: channels
 
 on:
@@ -45,10 +57,13 @@ concurrency:
 jobs:
   # Bare-minimum gate: the trunk must evaluate before we derive channels from it.
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') && fromJSON('["self-hosted","spacedock"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
+      # Skipped on spacedock: Nix is already native there, managed by NixOS —
+      # this action would otherwise fight the box's own nix.conf.
+      - if: ${{ !(github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') }}
+        uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -67,7 +82,7 @@ jobs:
         && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
       || (github.event_name == 'workflow_dispatch'
         && (github.ref_name == 'main' || github.ref_name == 'master'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') && fromJSON('["self-hosted","spacedock"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -81,7 +96,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: cachix/install-nix-action@v27
+      - if: ${{ !(github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') }}
+        uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -138,7 +154,7 @@ jobs:
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/rolling')
       || (github.event_name == 'workflow_dispatch' && github.ref_name == 'rolling')
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') && fromJSON('["self-hosted","spacedock"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -152,7 +168,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: cachix/install-nix-action@v27
+      - if: ${{ !(github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') }}
+        uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
