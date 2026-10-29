@@ -377,11 +377,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1793303458,
-        "narHash": "sha256-4cnzYPtMBEkvbSqkKKktFB/A+Jz00hUCt/3WF5VYZGM=",
+        "lastModified": 1793306904,
+        "narHash": "sha256-rD22BY4SwNbh8ypzjf43A037RCZx5Qh8K0q9DQU/UfI=",
         "owner": "gignsky",
         "repo": "roll-flow",
-        "rev": "c41971dca4693053a71881a30f84a00615194e79",
+        "rev": "21c28318eaba43b36d26064a98eade8cb0797548",
         "type": "github"
       },
       "original": {
@@ -508,6 +508,30 @@
         "owner": "gignsky",
         "repo": "roll-flow",
         "rev": "c41971dca4693053a71881a30f84a00615194e79",
+        "type": "github"
+      }
+    },
+    "roll-flow-0_2_15": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs-unstable"
+        ],
+        "pre-commit-hooks": [
+          "pre-commit-hooks"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793306904,
+        "narHash": "sha256-rD22BY4SwNbh8ypzjf43A037RCZx5Qh8K0q9DQU/UfI=",
+        "owner": "gignsky",
+        "repo": "roll-flow",
+        "rev": "21c28318eaba43b36d26064a98eade8cb0797548",
+        "type": "github"
+      },
+      "original": {
+        "owner": "gignsky",
+        "repo": "roll-flow",
+        "rev": "21c28318eaba43b36d26064a98eade8cb0797548",
         "type": "github"
       }
     },
@@ -681,6 +705,7 @@
         "roll-flow-0_2_12-dev": "roll-flow-0_2_12-dev",
         "roll-flow-0_2_13": "roll-flow-0_2_13",
         "roll-flow-0_2_14": "roll-flow-0_2_14",
+        "roll-flow-0_2_15": "roll-flow-0_2_15",
         "roll-flow-0_2_5": "roll-flow-0_2_5",
         "roll-flow-0_2_6-dev": "roll-flow-0_2_6-dev",
         "roll-flow-0_2_7": "roll-flow-0_2_7",
