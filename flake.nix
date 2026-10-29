@@ -131,6 +131,14 @@
       url = "github:gignsky/giglab.dev";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
+
+    roll-flow-0_2_14 = {
+      url = "github:gignsky/roll-flow/c41971dca4693053a71881a30f84a00615194e79";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
   };
 
   outputs =
