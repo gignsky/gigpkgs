@@ -716,7 +716,7 @@
         ],
         "nixos-unstable": "nixos-unstable",
         "nixpkgs": [
-          "nixpkgs-master"
+          "nixos-2605"
         ],
         "nixpkgs-master": [
           "nixpkgs-unstable"
