@@ -90,6 +90,13 @@
       "versions": {
         "roll-flow": "0.2.14"
       }
+    },
+    {
+      "rev": "21c28318eaba43b36d26064a98eade8cb0797548",
+      "date": "2026-10-29",
+      "versions": {
+        "roll-flow": "0.2.15"
+      }
     }
   ]
 }
