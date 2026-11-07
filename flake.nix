@@ -28,14 +28,6 @@
 
     fupdate.url = "github:gignsky/fupdate";
 
-    gigvim = {
-      url = "github:gignsky/gigvim";
-      inputs = {
-        nixpkgs.follows = "nixpkgs-unstable";
-        home-manager.follows = "home-manager";
-      };
-    };
-
     roll-flow = {
       url = "github:gignsky/roll-flow/main";
       inputs = {
