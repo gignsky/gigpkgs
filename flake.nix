@@ -28,14 +28,6 @@
 
     fupdate.url = "github:gignsky/fupdate";
 
-    gigvim = {
-      url = "github:gignsky/gigvim";
-      inputs = {
-        nixpkgs.follows = "nixpkgs-unstable";
-        home-manager.follows = "home-manager";
-      };
-    };
-
     roll-flow = {
       url = "github:gignsky/roll-flow/main";
       inputs = {
@@ -129,7 +121,10 @@
 
     giglab-dev = {
       url = "github:gignsky/giglab.dev";
-      inputs.nixpkgs.follows = "nixpkgs-unstable";
+      # Pinned to the Hydra-tested channel: nixpkgs master (fb78040) made
+      # cargoSetupHook force system zstd/libgit2, which breaks static-web-server.
+      # Revert to "nixpkgs-unstable" once nixpkgs fixes that package.
+      inputs.nixpkgs.follows = "nixos-unstable";
     };
 
     roll-flow-0_2_14 = {
