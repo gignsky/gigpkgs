@@ -135,7 +135,7 @@
           "home-manager"
         ],
         "nixpkgs": [
-          "nixpkgs-unstable"
+          "nixos-unstable"
         ],
         "nvf": "nvf",
         "snacks-nvim": "snacks-nvim"

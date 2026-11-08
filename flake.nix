@@ -154,7 +154,10 @@
     gigvim = {
       url = "github:gignsky/gigvim";
       inputs = {
-        nixpkgs.follows = "nixpkgs-unstable";
+        # Pinned to the Hydra-tested channel: nixpkgs master broke tectonic
+        # (aws-lc-sys AWS_LC_SYS_USE_SYSTEM=1 with no system AWS-LC), which the
+        # full gigvim variants pull in. Revert to "nixpkgs-unstable" once fixed.
+        nixpkgs.follows = "nixos-unstable";
         home-manager.follows = "home-manager";
       };
     };
