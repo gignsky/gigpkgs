@@ -150,6 +150,14 @@
         pre-commit-hooks.follows = "pre-commit-hooks";
       };
     };
+
+    gigvim = {
+      url = "github:gignsky/gigvim";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        home-manager.follows = "home-manager";
+      };
+    };
   };
 
   outputs =
