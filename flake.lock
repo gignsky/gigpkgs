@@ -24,6 +24,22 @@
     "flake-compat": {
       "flake": false,
       "locked": {
+        "lastModified": 1777699697,
+        "narHash": "sha256-Eg9b/rq/ECYwNwEXs5i9wHyhxNI0JrYx2srdI2uZMaQ=",
+        "ref": "refs/heads/main",
+        "rev": "382052b74656a369c5408822af3f2501e9b1af81",
+        "revCount": 94,
+        "type": "git",
+        "url": "https://git.lix.systems/lix-project/flake-compat.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://git.lix.systems/lix-project/flake-compat.git"
+      }
+    },
+    "flake-compat_2": {
+      "flake": false,
+      "locked": {
         "lastModified": 1767039857,
         "narHash": "sha256-vNpUSpF5Nuw8xvDLj2KCwwksIbjua2LZCqhV1LNRDns=",
         "owner": "NixOS",
@@ -112,6 +128,48 @@
         "type": "github"
       }
     },
+    "gigvim": {
+      "inputs": {
+        "git-dev-nvim": "git-dev-nvim",
+        "home-manager": [
+          "home-manager"
+        ],
+        "nixpkgs": [
+          "nixos-unstable"
+        ],
+        "nvf": "nvf",
+        "snacks-nvim": "snacks-nvim"
+      },
+      "locked": {
+        "lastModified": 1794107276,
+        "narHash": "sha256-Y4GqGl1Sq+aOlki6+x1LqWmfc/7holDq1UpdFPmys1U=",
+        "owner": "gignsky",
+        "repo": "gigvim",
+        "rev": "0cf841f945107766add25c1293d39a7eb7859522",
+        "type": "github"
+      },
+      "original": {
+        "owner": "gignsky",
+        "repo": "gigvim",
+        "type": "github"
+      }
+    },
+    "git-dev-nvim": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790065514,
+        "narHash": "sha256-locfBfG9LYjxK1toQyqvuB/dP62jsRmz0S/qfVZbZNU=",
+        "owner": "moyiz",
+        "repo": "git-dev.nvim",
+        "rev": "727c9526a7fcbf980aa1bb2caf2383c74a543093",
+        "type": "github"
+      },
+      "original": {
+        "owner": "moyiz",
+        "repo": "git-dev.nvim",
+        "type": "github"
+      }
+    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -130,6 +188,21 @@
         "owner": "nix-community",
         "ref": "release-26.05",
         "repo": "home-manager",
+        "type": "github"
+      }
+    },
+    "mnw": {
+      "locked": {
+        "lastModified": 1784154424,
+        "narHash": "sha256-HRn4O1X2ShYtbq5Egji72/aemyc2cIQicjRZD9hBqM8=",
+        "owner": "Gerg-L",
+        "repo": "mnw",
+        "rev": "0151d9fa87992cbeb67c86616fb9170dcec830b6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Gerg-L",
+        "repo": "mnw",
         "type": "github"
       }
     },
@@ -197,9 +270,32 @@
         "type": "github"
       }
     },
-    "pre-commit-hooks": {
+    "nvf": {
       "inputs": {
         "flake-compat": "flake-compat",
+        "mnw": "mnw",
+        "nixpkgs": [
+          "gigvim",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1794049908,
+        "narHash": "sha256-K1rzAlksFZWJ0JQfB9kIEFIp9N+pzZs9881Va5LmytY=",
+        "owner": "NotAShelf",
+        "repo": "nvf",
+        "rev": "d36cd373c5636f9a97c228ffaaec857383d88cbc",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NotAShelf",
+        "repo": "nvf",
+        "type": "github"
+      }
+    },
+    "pre-commit-hooks": {
+      "inputs": {
+        "flake-compat": "flake-compat_2",
         "nixpkgs": [
           "nixpkgs"
         ]
@@ -559,6 +655,7 @@
         "claude-desktop": "claude-desktop",
         "fupdate": "fupdate",
         "giglab-dev": "giglab-dev",
+        "gigvim": "gigvim",
         "home-manager": "home-manager",
         "nixos-2605": "nixos-2605",
         "nixos-stable": [
@@ -587,6 +684,22 @@
         "roll-flow-0_2_8": "roll-flow-0_2_8",
         "roll-flow-0_2_9": "roll-flow-0_2_9",
         "roll-flow-0_2_9-dev": "roll-flow-0_2_9-dev"
+      }
+    },
+    "snacks-nvim": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779727538,
+        "narHash": "sha256-gU0XjCcnmZNwZ/erukA8miBiMKaSsSiInLtiv+OyEJI=",
+        "owner": "folke",
+        "repo": "snacks.nvim",
+        "rev": "882c996cf28183f4d63640de0b4c02ec886d01f2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "folke",
+        "repo": "snacks.nvim",
+        "type": "github"
       }
     },
     "systems": {
