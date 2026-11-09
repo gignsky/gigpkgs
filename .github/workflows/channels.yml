@@ -26,7 +26,9 @@
 #
 # Triggers on `main`, `master`, and `rolling` so the planned trunk rename
 # (main -> master, per gigpkgs#14) needs no flag-day change here, and so the
-# rolling-sourced channels get projected on every push to rolling.
+# unstable channels get projected on every push to either trunk. When rolling
+# is equal to or behind master (e.g. right after a hotfix or promotion), the
+# unstable branches are projected from master instead so they never lag it.
 #
 # Runner: every job below can run on spacedock's self-hosted runner (native
 # Nix, no per-run install, and it shares spacedock's store/binary cache)
@@ -146,15 +148,32 @@ jobs:
   # from `rolling` — gigpkgs' own bleeding-edge trunk — so consumers pinned to
   # them see gigpkgs packages at whatever version is currently on rolling,
   # ahead of promotion to master.
+  #
+  # Also runs on pushes to the stable trunk (main / master), so a hotfix or
+  # promotion re-derives unstable even when rolling has nothing new. The source
+  # is resolved in the projection step: rolling when it carries anything master
+  # lacks, otherwise master (rolling equal to or behind master).
   derive-unstable:
     needs: check
-    # Project onto channel branches on a real push to rolling, or a manual
-    # dispatch against it (so the derive can be tested on demand). NEVER on
-    # PRs — we don't derive channel branches from unmerged code.
+    # Project onto channel branches on a real push to rolling or the stable
+    # trunk, or a manual dispatch against either (so the derive can be tested
+    # on demand). NEVER on PRs — we don't derive channel branches from
+    # unmerged code.
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/rolling')
-      || (github.event_name == 'workflow_dispatch' && github.ref_name == 'rolling')
+      (github.event_name == 'push'
+        && (github.ref == 'refs/heads/rolling'
+          || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+      || (github.event_name == 'workflow_dispatch'
+        && (github.ref_name == 'rolling'
+          || github.ref_name == 'main' || github.ref_name == 'master'))
     runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SPACEDOCK_RUNNER == 'true') && fromJSON('["self-hosted","spacedock"]') || 'ubuntu-latest' }}
+    # Rolling- and master-triggered runs both push the same branches (and roll-flow
+    # pushes both trunks at once), so serialize per derived branch instead of
+    # racing --force-with-lease. Not cancelled: each run re-resolves the
+    # source from the latest refs, so a queued run never projects stale state.
+    concurrency:
+      group: derive-unstable-${{ matrix.branch }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -180,10 +199,25 @@ jobs:
           git config user.name  "gigpkgs-bot"
           git config user.email "gigpkgs-bot@users.noreply.github.com"
 
+          # 0. Resolve the source trunk from the current remote refs (not the
+          #    triggering SHA): rolling if it has commits master lacks,
+          #    otherwise the stable trunk, so unstable is never behind master.
+          git fetch --quiet origin
+          stable=master
+          git rev-parse --verify --quiet origin/master >/dev/null || stable=main
+          if git merge-base --is-ancestor origin/rolling "origin/$stable"; then
+            src="$stable"
+          else
+            src=rolling
+          fi
+          src_sha=$(git rev-parse "origin/$src")
+          echo "Projecting from $src ($src_sha), triggered by ${{ github.ref_name }}"
+          git checkout --quiet --detach "$src_sha"
+
           # 1. Overwrite the channel marker (drives base + selection logic).
           {
-            printf '# CI-derived from %s (%s) — do not edit.\n' "${{ github.ref_name }}" "${{ github.sha }}"
-            printf '# Regenerated on every push to rolling by .github/workflows/channels.yml\n'
+            printf '# CI-derived from %s (%s) — do not edit.\n' "$src" "$src_sha"
+            printf '# Regenerated on every push to rolling or master by .github/workflows/channels.yml\n'
             printf '"%s"\n' "${{ matrix.channel }}"
           } > channel.nix
 
@@ -211,5 +245,5 @@ jobs:
           nix flake lock --accept-flake-config
 
           git add channel.nix flake.nix flake.lock
-          git commit -m "derive(${{ matrix.branch }}): channel=${{ matrix.channel }} @ ${{ github.sha }}"
+          git commit -m "derive(${{ matrix.branch }}): channel=${{ matrix.channel }} @ $src_sha ($src)"
           git push --force-with-lease origin "HEAD:refs/heads/${{ matrix.branch }}"
