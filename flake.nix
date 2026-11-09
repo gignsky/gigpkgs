@@ -161,6 +161,14 @@
         home-manager.follows = "home-manager";
       };
     };
+
+    roll-flow-0_2_17 = {
+      url = "github:gignsky/roll-flow/6372c5544f387b4a00af9f735a7ec9d10de117d1";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
   };
 
   outputs =
