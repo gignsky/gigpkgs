@@ -18,6 +18,10 @@
         exit 1
       '';
   inputman = import ./inputMan { inherit pkgs; };
+  inherit (import ./rebuild-scripts { inherit pkgs; })
+    gig-nixos-rebuild
+    gig-home-switch
+    ;
   locker = import ./locker.nix { inherit pkgs; };
   quick-results = import ./quick-results.nix { inherit pkgs; };
   supertree = import ./supertree.nix { inherit pkgs; };

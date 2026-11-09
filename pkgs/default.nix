@@ -20,6 +20,8 @@ inputPackages
   inherit (programs)
     cargo-update
     gignews
+    gig-home-switch
+    gig-nixos-rebuild
     inputman
     locker
     quick-results
