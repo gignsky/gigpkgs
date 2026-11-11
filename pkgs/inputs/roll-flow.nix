@@ -17,4 +17,5 @@
   "roll-flow-0.2.16" = inputs.roll-flow-0_2_16.packages.${system}.default;
   "roll-flow-0.2.17" = inputs.roll-flow-0_2_17.packages.${system}.default;
   "roll-flow-0.2.18" = inputs.roll-flow-0_2_18.packages.${system}.default;
+  "roll-flow-0.2.19" = inputs.roll-flow-0_2_19.packages.${system}.default;
 }
