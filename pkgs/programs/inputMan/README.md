@@ -189,6 +189,24 @@ something did:
 Inputs whose packages carry no `version` attribute (a plain wrapper
 derivation, for instance) simply report the revision diff.
 
+### Whole-flake updates (`just update`)
+
+`just update` runs `nix flake update` through three internal helpers, so a
+bulk relock still leaves a news trail:
+
+1. `inputman __flake-update-snapshot <dir>` (before the update) saves a copy
+   of `flake.lock` and the package versions of every managed input.
+2. `inputman __flake-update-news <dir>` (after the update) writes a
+   `<date>-flake-update` summary entry that lists every root input that
+   changed. It also writes a normal `update` entry (revision and version diff)
+   for each inputMan-managed input that moved. It then prints the files it
+   wrote so the recipe can stage them.
+3. `inputman __lock-diff <old> <new>` provides the same input list for the
+   commit message.
+
+These entries don't rescan for new packages or modules, and they don't
+archive versions. Run `inputman update <name>` when you need either.
+
 ## Notes
 
 - On install failure after writing files, inputMan rolls back `flake.nix`, the

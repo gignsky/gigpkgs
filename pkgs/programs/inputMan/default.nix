@@ -200,6 +200,57 @@ pkg
           echo "news entry version diff verified" > $out
         '';
 
+    lock-diff =
+      pkgs.runCommand "inputman-lock-diff-test"
+        {
+          buildInputs = [
+            pkg
+            pkgs.gnugrep
+          ];
+        }
+        ''
+          set -e
+          workdir=$(mktemp -d)
+          cd "$workdir"
+
+          cat > old.lock <<'LOCK'
+          {
+            "nodes": {
+              "root": { "inputs": { "same": "same", "moved": "moved", "gone": "gone", "fol": ["moved"] } },
+              "same": { "locked": { "rev": "1111111111111111111111111111111111111111", "lastModified": 1767225600 } },
+              "moved": { "locked": { "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "lastModified": 1767225600 } },
+              "gone": { "locked": { "rev": "cccccccccccccccccccccccccccccccccccccccc" } }
+            },
+            "root": "root",
+            "version": 7
+          }
+          LOCK
+          cat > new.lock <<'LOCK'
+          {
+            "nodes": {
+              "root": { "inputs": { "same": "same", "moved": "moved", "added": "added", "fol": ["moved"] } },
+              "same": { "locked": { "rev": "1111111111111111111111111111111111111111", "lastModified": 1767225600 } },
+              "moved": { "locked": { "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "lastModified": 1769904000 } },
+              "added": { "locked": { "narHash": "sha256-xyz", "lastModified": 1769904000 } }
+            },
+            "root": "root",
+            "version": 7
+          }
+          LOCK
+
+          inputman __lock-diff old.lock new.lock > out
+          cat out
+          grep -qx "moved aaaaaaa -> bbbbbbb (2026-01-01 -> 2026-02-01)" out
+          grep -qx "added (new) sha256-xyz (2026-02-01)" out
+          grep -qx "gone (removed)" out
+          if grep -q "^same\|^fol" out; then
+            echo "unchanged/follows input leaked into the diff"; exit 1
+          fi
+          test "$(wc -l < out)" = 3
+
+          echo "lock_diff verified" > $out
+        '';
+
     patch-flake-add =
       pkgs.runCommand "inputman-patch-flake-add-test"
         {
