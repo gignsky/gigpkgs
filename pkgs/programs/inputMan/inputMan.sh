@@ -1324,6 +1324,8 @@ write_news_entry() {
     printf '  id = "%s";\n' "$id"
     printf '  num = %s;\n' "$num"
     printf '  date = "%s";\n' "$today"
+    # UTC timestamp so same-day entries sort correctly in gignews.
+    printf '  timestamp = "%s";\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf "  message = ''\n"
     printf '    %s\n' "$headline"
     printf '\n'
@@ -1344,6 +1346,184 @@ write_news_entry() {
 
   ok "Wrote news entry ${file}" >&2
   printf '%s' "$file"
+}
+
+# ── Whole-flake update news (`just update`) ─────────────────────────────
+# `nix flake update` refreshes every input at once, bypassing `inputman update`.
+# These helpers let the justfile record what moved: a snapshot before the
+# update, then one summary entry for all changed inputs plus an inputMan-style
+# update entry for each inputMan-managed input that moved along with it.
+
+# Inputs inputMan manages: anything with a generated aggregator under any of
+# the four inputs/ dirs.
+managed_input_names() {
+  local d f n
+  for d in pkgs/inputs modules/home/inputs modules/nixos/inputs containers/inputs; do
+    for f in "$d"/*.nix; do
+      [[ -e "$f" ]] || continue
+      n=$(basename "$f" .nix)
+      [[ "$n" == "default" || "$n" == "devShellPackages" ]] && continue
+      printf '%s\n' "$n"
+    done
+  done | sort -u
+}
+
+# Diff two flake.lock files over the root inputs. Emits pipe-separated
+# "name|old_rev|new_rev|old_date|new_date" records for every root input that
+# was added, removed, or whose locked rev (or narHash, for rev-less inputs)
+# changed. Root inputs that are `follows` (arrays) are skipped.
+lock_diff() {
+  local old_lock="$1" new_lock="$2"
+  jq -r -n --slurpfile old "$old_lock" --slurpfile new "$new_lock" '
+    def roots($l): ($l.nodes[$l.root // "root"].inputs // {})
+      | to_entries | map(select(.value | type == "string"))
+      | map({key: .key, value: $l.nodes[.value].locked}) | from_entries;
+    def id($x): ($x.rev // $x.narHash // "");
+    def day($x): if ($x.lastModified // null) == null then "" else ($x.lastModified | todate | .[0:10]) end;
+    (roots($old[0])) as $o | (roots($new[0])) as $n
+    | ([$o, $n] | map(keys) | add | unique)[] as $k
+    | ($o[$k]) as $a | ($n[$k]) as $b
+    | select(($a == null) or ($b == null) or (id($a) != id($b)))
+    | [$k,
+       (if $a == null then "" else id($a) end),
+       (if $b == null then "" else id($b) end),
+       (if $a == null then "" else day($a) end),
+       (if $b == null then "" else day($b) end)]
+    | join("|")
+  '
+}
+
+# Human-readable form of a lock_diff record.
+format_lock_change() {
+  local name="$1" old_rev="$2" new_rev="$3" old_date="$4" new_date="$5"
+  if [[ -z "$old_rev" ]]; then
+    printf '%s (new) %s%s' "$name" "$(short_rev "$new_rev")" "${new_date:+ (${new_date})}"
+  elif [[ -z "$new_rev" ]]; then
+    printf '%s (removed)' "$name"
+  else
+    printf '%s %s -> %s' "$name" "$(short_rev "$old_rev")" "$(short_rev "$new_rev")"
+    [[ -n "$new_date" ]] && printf ' (%s)' "${old_date:+${old_date} -> }${new_date}"
+  fi
+  return 0
+}
+
+# Snapshot the pre-update state into <dir>: a copy of flake.lock plus the
+# evaluated package versions of every managed input (evaluated against the
+# OLD lock, so this must run before `nix flake update`).
+cmd_flake_update_snapshot() {
+  local dir="$1"
+  [[ -f flake.lock ]] || die "No flake.lock found — run from the repo root"
+  mkdir -p "$dir/versions"
+  cp flake.lock "$dir/flake.lock"
+
+  local system name
+  system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    info "Recording current versions of '${name}' ..."
+    input_package_versions "$name" "$system" >"$dir/versions/${name}"
+  done < <(managed_input_names)
+}
+
+# Write the news for a completed whole-flake update, given the snapshot dir.
+# Prints the paths of every file written/changed (one per line) for the caller
+# to stage. Writes nothing when no root input changed.
+cmd_flake_update_news() {
+  local dir="$1"
+  [[ -f "$dir/flake.lock" ]] || die "No snapshot at '${dir}' (run __flake-update-snapshot first)"
+  [[ -d news/entries ]] || { warn "News directory 'news/entries' not present; skipping news."; return 0; }
+
+  local -a records=()
+  local rec
+  while IFS= read -r rec; do
+    [[ -n "$rec" ]] && records+=("$rec")
+  done < <(lock_diff "$dir/flake.lock" flake.lock)
+  if [[ ${#records[@]} -eq 0 ]]; then
+    info "No flake inputs changed; no news written."
+    return 0
+  fi
+
+  # ── Summary entry: every changed input ──────────────────────────────
+  local today stamp id file num n=2
+  today=$(date +%Y-%m-%d)
+  stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  id="${today}-flake-update"
+  while [[ -f "news/entries/${id}.nix" ]]; do
+    id="${today}-flake-update-${n}"
+    n=$((n + 1))
+  done
+  file="news/entries/${id}.nix"
+  num=$(next_news_num)
+
+  local name old_rev new_rev old_date new_date
+  {
+    printf '{\n'
+    printf '  id = "%s";\n' "$id"
+    printf '  num = %s;\n' "$num"
+    printf '  date = "%s";\n' "$today"
+    printf '  timestamp = "%s";\n' "$stamp"
+    printf "  message = ''\n"
+    printf '    Updated %s flake input(s)\n' "${#records[@]}"
+    printf '\n'
+    printf '    flake.lock was refreshed by a whole-flake update (just update).\n'
+    printf '\n'
+    for rec in "${records[@]}"; do
+      IFS='|' read -r name old_rev new_rev old_date new_date <<<"$rec"
+      printf '      %s\n' "$(format_lock_change "$name" "$old_rev" "$new_rev" "$old_date" "$new_date")"
+    done
+    printf "  '';\n"
+    printf '}\n'
+  } >"$file"
+  ok "Wrote news entry ${file}" >&2
+  printf '%s\n' "$file"
+
+  # ── Per-input inputMan entries for managed inputs that moved ────────
+  local -A changed=()
+  for rec in "${records[@]}"; do
+    IFS='|' read -r name old_rev new_rev old_date new_date <<<"$rec"
+    [[ -n "$old_rev" && -n "$new_rev" ]] && changed["$name"]="$rec"
+  done
+
+  local system ledger_touched=""
+  system=$(nix eval --impure --expr "builtins.currentSystem" --raw 2>/dev/null || echo "x86_64-linux")
+  while IFS= read -r name; do
+    [[ -z "$name" || -z "${changed[$name]:-}" ]] && continue
+    IFS='|' read -r name old_rev new_rev old_date new_date <<<"${changed[$name]}"
+
+    local before_versions="" after_versions
+    [[ -f "$dir/versions/${name}" ]] && before_versions=$(<"$dir/versions/${name}")
+    after_versions=$(input_package_versions "$name" "$system")
+    record_input_version "$name" "$old_rev" "$old_date" "$before_versions"
+    record_input_version "$name" "$new_rev" "$new_date" "$after_versions"
+    [[ -n "$before_versions$after_versions" ]] && ledger_touched=1
+
+    local details="" headline_suffix="" first_change="" alias old_v new_v
+    local -a version_lines=()
+    details+="Revision: $(short_rev "$old_rev") -> $(short_rev "$new_rev")"$'\n'
+    [[ -n "$new_date" ]] && details+="Upstream date: ${old_date:+${old_date} -> }${new_date}"$'\n'
+    while IFS='|' read -r alias old_v new_v; do
+      [[ -z "$alias" ]] && continue
+      version_lines+=("$(format_version_change "$alias" "$old_v" "$new_v")")
+      [[ -z "$first_change" ]] && first_change="${old_v:+${old_v} -> }${new_v}"
+    done < <(version_changes "$before_versions" "$after_versions")
+    if [[ ${#version_lines[@]} -gt 0 ]]; then
+      details+="Versions:"$'\n'
+      local line
+      for line in "${version_lines[@]}"; do
+        details+="  ${line}"$'\n'
+      done
+      [[ ${#version_lines[@]} -eq 1 ]] && headline_suffix=" (${first_change})"
+    fi
+    details+=$'\n'"Picked up by a whole-flake update (just update), not 'inputman update'."$'\n'
+    details+="Run 'inputman update ${name}' to rescan for new packages/modules and archive versions."
+
+    local entry
+    entry=$(write_news_entry update "$name" "$details" "$headline_suffix") || entry=""
+    [[ -n "$entry" ]] && printf '%s\n' "$entry"
+  done < <(managed_input_names)
+
+  [[ -n "$ledger_touched" && -f "$(versions_ledger_file)" ]] && printf '%s\n' "$(versions_ledger_file)"
+  return 0
 }
 
 finalize_commit() {
@@ -2853,6 +3033,25 @@ __version-changes)
     format_version_change "$alias" "$old_v" "$new_v"
     echo
   done < <(version_changes "$1" "$2")
+  ;;
+__flake-update-snapshot)
+  shift
+  [[ $# -eq 1 ]] || die "Usage: inputman __flake-update-snapshot <dir>"
+  cmd_flake_update_snapshot "$1"
+  ;;
+__flake-update-news)
+  shift
+  [[ $# -eq 1 ]] || die "Usage: inputman __flake-update-news <snapshot-dir>"
+  cmd_flake_update_news "$1"
+  ;;
+__lock-diff)
+  shift
+  [[ $# -eq 2 ]] || die "Usage: inputman __lock-diff <old-lock> <new-lock>"
+  while IFS='|' read -r name old_rev new_rev old_date new_date; do
+    [[ -z "$name" ]] && continue
+    format_lock_change "$name" "$old_rev" "$new_rev" "$old_date" "$new_date"
+    echo
+  done < <(lock_diff "$1" "$2")
   ;;
 __write-news-entry)
   shift
