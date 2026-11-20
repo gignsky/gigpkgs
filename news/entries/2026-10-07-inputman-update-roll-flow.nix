@@ -2,6 +2,7 @@
   id = "2026-10-07-inputman-update-roll-flow";
   num = 50;
   date = "2026-10-07";
+  timestamp = "2026-10-07T23:00:45Z";
   message = ''
     Updated flake input 'roll-flow' (0.2.8 -> 0.2.9)
 
