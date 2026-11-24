@@ -193,6 +193,14 @@
         pre-commit-hooks.follows = "pre-commit-hooks";
       };
     };
+
+    roll-flow-0_2_21 = {
+      url = "github:gignsky/roll-flow/3cdd833f156d8c47474ff9b6b5f195c79763cb30";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
+    };
   };
 
   outputs =

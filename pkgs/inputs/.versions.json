@@ -132,6 +132,13 @@
       "versions": {
         "roll-flow": "0.2.20"
       }
+    },
+    {
+      "rev": "3cdd833f156d8c47474ff9b6b5f195c79763cb30",
+      "date": "2026-11-24",
+      "versions": {
+        "roll-flow": "0.2.21"
+      }
     }
   ]
 }
